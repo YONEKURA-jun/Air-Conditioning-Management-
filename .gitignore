@@ -1,0 +1,10 @@
+x64/
+AirCondi.e943ade9/
+*.user
+*.exe
+*.obj
+*.pdb
+*.ilk
+.vs/
+Debug/
+Release/

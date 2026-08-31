@@ -10,7 +10,6 @@
 #include <Windows.h>
 #include <string.h>
 
-
 #define INPUT_CHECK -1
 #define CLIENT_NAME 21
 #define ALL_CLIENTS 15
@@ -24,6 +23,7 @@
 enum MAIN_SCREEN {
 	SHOW_LOG,
 	CLIENT_CONTROL,
+	TEST_MODE = 999,
 };
 
 enum ERROR_REACTION {
@@ -44,7 +44,10 @@ typedef struct client {
 int main_screen();//ŠÇ—‘I‘ğˆ‚ÌƒƒCƒ“‰æ–Ê‚ğ•\¦‚·‚éB
 void get_log();//‹N“®‚É’¼‹ß‚UŠÔ•ª‚Ìî•ñ‚ğŠO•”ƒtƒHƒ‹ƒ_‚©‚çæ“¾‚·‚éB
 void error_reaction(int mode);//İ’è‚µ‚½ƒ‚[ƒh‚ÌƒŠƒAƒNƒVƒ‡ƒ“‚ğ•\¦‚·‚éB
-void set_File_send();//‘—óM‚ÌƒZƒbƒgƒAƒbƒv‚ğs‚¤ŠÖ”
+void get_File_addr();//ŠO•”ƒtƒHƒ‹ƒ_‚©‚ç•K—v‚Èî•ñ‚ğŠl“¾‚·‚éŠÖ”B
+void set_up_send();//ŠO•”‹@Ší‚Æ‚Ì’ÊM‹@”\‚ÌƒZƒbƒg‚ğs‚¤ŠÖ”B
+void make_send_data(HANDLE handle);//İ’è‚É]‚¢w’è‚µ‚½ƒf[ƒ^‚ğ‘—M‚·‚éŠÖ”B
+void standby_catch_data(HANDLE handle);//óM‚µ‚½ƒf[ƒ^‚ğ‰æ–Ê‚É•\¦‚·‚éB
 
 
 void main(void) {
@@ -66,7 +69,11 @@ void main(void) {
 			break;
 
 		case CLIENT_CONTROL:
-			set_File_send();
+			get_File_addr();
+			break;
+
+		case TEST_MODE:
+			set_up_send();
 			break;
 
 		default:
@@ -85,7 +92,7 @@ int main_screen() {
 	printf("1:ƒNƒ‰ƒCƒAƒ“ƒg‚Ö‚Ì–½—ß\n");
 	printf("‚»‚êˆÈŠO:ŠÇ—‰æ–Ê‚ÌI—¹\n");
 
-	
+
 	if (scanf("%d", &button) != 1) {
 		button = INPUT_CHECK;
 	}
@@ -126,9 +133,9 @@ void error_reaction(int mode) {
 	}
 }
 
-void set_File_send() {///todo: •W€“ü—Í‚Å‚Ì‘ÎÛ‚Ìw’è@•s³‚È“ü—Í‚Ö‚Ì‘Îô@‘—M“à—e‚Ìİ’è@@ŠÖ”‰»‚µ‚Äğ“ú‚ğ’Pƒ‰»
+void get_File_addr() {
 	char  address_data[ADDRESS_DATA] = { 0 };
-	char*   id = NULL;
+	char* id = NULL;
 	char* port = NULL;
 
 	int checker = INPUT_CHECK;
@@ -145,9 +152,61 @@ void set_File_send() {///todo: •W€“ü—Í‚Å‚Ì‘ÎÛ‚Ìw’è@•s³‚È“ü—Í‚Ö‚Ì‘Îô@‘—M“
 	id = strtok(address_data, ",\n");
 	port = strtok(NULL, ",\n");
 
+
 	printf("‘ÎÛF%s”Ô‚É–½—ß‚ğ‘—‚è‚Ü‚·A‚æ‚ë‚µ‚¢‚Å‚·‚©H\n", id);
-	printf("ƒeƒXƒg—pƒvƒŠƒ“ƒg•¶F%s\n", port);
 	printf("\n");
 
 }
 
+void set_up_send() {///Šl“¾‚µ‚½ƒ|[ƒg‚É‡‚í‚¹‚ÄƒZƒbƒgƒAƒbƒv‚ğs‚¤
+	HANDLE client;
+
+	client = CreateFileA(
+		"COM5",
+		GENERIC_READ | GENERIC_WRITE,
+		0,
+		NULL,
+		OPEN_EXISTING,
+		0,
+		NULL
+	);
+	DCB dcb = { 0 };
+	dcb.DCBlength = sizeof(DCB);
+	GetCommState(client, &dcb); 
+	dcb.BaudRate = CBR_9600;
+	dcb.ByteSize = 8;
+	dcb.StopBits = ONESTOPBIT;
+	SetCommState(client, &dcb);
+
+	COMMTIMEOUTS time_out = { 0 };
+	GetCommTimeouts(client, &time_out);
+	time_out.ReadIntervalTimeout = 50;
+	time_out.ReadTotalTimeoutConstant = 1000;
+	SetCommTimeouts(client, &time_out);
+
+	make_send_data(client);
+	standby_catch_data(client);
+	CloseHandle(client);
+
+}
+
+void make_send_data(HANDLE handle) {
+	char order[] = "y";
+	DWORD result = 0;
+
+	WriteFile(handle, order, 1, &result, NULL);
+	if (result == 1) {
+		printf("‘—M‚É¬Œ÷‚µ‚Ü‚µ‚½I\n");
+	}
+	else  printf("ƒGƒ‰[”Ô†: %d\n", GetLastError());
+}
+
+void standby_catch_data(HANDLE handle) {
+	char answer[15] = { 0 };
+	DWORD resurt = 0;
+	if (ReadFile(handle, answer, sizeof(answer), &resurt, NULL) != 0) {
+		printf("óM‚É¬Œ÷‚µ‚Ü‚µ‚½I\n");
+	}
+	else printf("ƒGƒ‰[”Ô†: %d\n", GetLastError());
+	printf("%s", answer);
+}

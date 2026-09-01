@@ -14,16 +14,16 @@
 #define CLIENT_NAME 21
 #define ALL_CLIENTS 15
 #define HEADER_SIZE 26
-#define LOG_SIZE 16 
-#define ID_SIZE  5
+#define LOG_SIZE 17 
+#define ID_SIZE_DATA 6
 #define PORT_SIZE 6
 #define ADDRESS_DATA 15
+#define CHECK_DATA 6
 
 
 enum MAIN_SCREEN {
 	SHOW_LOG,
 	CLIENT_CONTROL,
-	TEST_MODE = 999,
 };
 
 enum ERROR_REACTION {
@@ -44,9 +44,10 @@ typedef struct client {
 int main_screen();//管理選択肢のメイン画面を表示する。
 void get_log();//起動時に直近６時間分の情報を外部フォルダから取得する。
 void error_reaction(int mode);//設定したモードのリアクションを表示する。
-void get_File_addr();//外部フォルダから必要な情報を獲得する関数。
-void set_up_send();//外部機器との通信機能のセットを行う関数。
-void make_send_data(HANDLE handle);//設定に従い指定したデータを送信する関数。
+
+void get_File_addr();//外部フォルダから必要な情報を獲得する。
+void set_up_send(char* port);//引数の外部機器との通信機能のセットを行う。
+void make_send_data(HANDLE handle);//設定に従い指定したデータを送信する。
 void standby_catch_data(HANDLE handle);//受信したデータを画面に表示する。
 
 
@@ -57,11 +58,9 @@ void main(void) {
 	int choice = 0;
 	bool end_flag = true;
 
-
 	while (end_flag != false) {
 		choice = INPUT_CHECK;
 		choice = main_screen();
-
 		switch (choice) {
 
 		case SHOW_LOG:
@@ -70,10 +69,6 @@ void main(void) {
 
 		case CLIENT_CONTROL:
 			get_File_addr();
-			break;
-
-		case TEST_MODE:
-			set_up_send();
 			break;
 
 		default:
@@ -100,18 +95,21 @@ int main_screen() {
 	return(button);
 }
 
-void get_log() {
+void get_log() {//todo;
 	FILE* fp;
 	char temp_header[HEADER_SIZE] = { 0 };
+	int count = 0;
+
 
 	fp = fopen("Client_Log.txt", "rb");
 	if (fp == NULL) {
 		error_reaction(FILE_SYS);
 		return;
 	}
-	fgets(temp_header, HEADER_SIZE, fp);
-	printf("%s\n", temp_header);
 
+	while (fgets(temp_header, HEADER_SIZE, fp) != NULL && count < CHECK_DATA) {
+		printf("%s\n", temp_header);
+	}
 
 	fclose(fp);
 }
@@ -137,9 +135,9 @@ void get_File_addr() {
 	char  address_data[ADDRESS_DATA] = { 0 };
 	char* id = NULL;
 	char* port = NULL;
-
 	int checker = INPUT_CHECK;
 	FILE* Client_address;
+
 
 	Client_address = fopen("Client_address.txt", "rb");
 	if (Client_address == NULL) {
@@ -147,22 +145,24 @@ void get_File_addr() {
 		return;
 	}
 
+
 	fgets(address_data, sizeof(address_data), Client_address);
 	fclose(Client_address);
 	id = strtok(address_data, ",\n");
 	port = strtok(NULL, ",\n");
 
 
-	printf("対象：%s番に命令を送ります、よろしいですか？\n", id);
+	printf("対象：%s\n", id);
 	printf("\n");
+	set_up_send(port);
 
 }
 
-void set_up_send() {///獲得したポートに合わせてセットアップを行う
+void set_up_send(char* port) {
 	HANDLE client;
 
 	client = CreateFileA(
-		"COM5",
+		port,
 		GENERIC_READ | GENERIC_WRITE,
 		0,
 		NULL,
@@ -191,7 +191,7 @@ void set_up_send() {///獲得したポートに合わせてセットアップを行う
 }
 
 void make_send_data(HANDLE handle) {
-	char order[] = "y";
+	char order[] = "0";
 	DWORD result = 0;
 
 	WriteFile(handle, order, 1, &result, NULL);
@@ -202,7 +202,7 @@ void make_send_data(HANDLE handle) {
 }
 
 void standby_catch_data(HANDLE handle) {
-	char answer[15] = { 0 };
+	char answer[LOG_SIZE] = { 0 };
 	DWORD resurt = 0;
 	if (ReadFile(handle, answer, sizeof(answer), &resurt, NULL) != 0) {
 		printf("受信に成功しました！\n");

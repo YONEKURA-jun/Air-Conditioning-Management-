@@ -17,9 +17,9 @@ const int BUZZ = 3;
 
 
 enum HOST_SIDE_COMMAND {
-  RESPONSE_TEMP ='0',
-  CHANGE_TEMP   ='1',
-  POWER_ON_OFF  ='2',
+  RESPONSE_TEMP =1,
+  CHANGE_TEMP   =2,
+  POWER_ON_OFF  =3,
 };
 
 
@@ -28,7 +28,7 @@ bool g_status = true;
 
 
 
-void power_OnOff();    //電源スイッチ
+void power_flip();    //電源スイッチ
 void power_onSign();   //スイッチONの可視化
 void power_OffSign();  //スイッチOFFの可視化
 void power_react();    //電源スイッチ押下時のリアクション。
@@ -36,6 +36,7 @@ void power_react();    //電源スイッチ押下時のリアクション。
 
 void to_receive_react();           //HOSTからの呼びかけがあった際のリアクション。
 void Action_select(int command);  //HOST側から与えられた命令に応える。
+void clean_Receive_Buff();//受信バッファ内の情報を全消去する。
 
 int get_temper();  //センサから温度を取得する。
 
@@ -57,14 +58,14 @@ void setup() {
 }
 
 void loop() {
-  power_OnOff();
+  power_flip();
   to_receive_react();
 }
 
 
 //以下関数定義
 
-void power_OnOff() {
+void power_flip() {
   static bool loop_lock = false;
   if (digitalRead(SW2) == LOW && !loop_lock) {
     g_status = !g_status;
@@ -90,6 +91,7 @@ void power_onSign() {
       delay(50);
       digitalWrite(LED4, HIGH);
     }
+    digitalWrite(LED2, LOW);
 }
 
 void power_OffSign() {
@@ -148,10 +150,15 @@ int get_temper() {
   return (temp);
 }
 
+void clean_Receive_Buff(){
+ while (Serial.available() > 0) {Serial.read();}
+}
+
 void power_react() {
   if (g_status == false) {
     power_onSign();
   } else if (g_status == true) {
     power_OffSign();
+    clean_Receive_Buff();
   }
 }

@@ -13,12 +13,11 @@
 #define INPUT_CHECK -1
 #define CLIENT_NAME 21
 #define ALL_CLIENTS 15
-#define HEADER_SIZE 26
-#define LOG_SIZE 17 
+#define LOG_SIZE 29
 #define ID_SIZE_DATA 6
 #define PASS_SIZE 6
 #define ADDRESS_DATA 15
-#define CHECK_DATA 6
+#define CHECK_DATA 8
 
 
 enum MAIN_SCREEN {
@@ -37,14 +36,18 @@ enum ERROR_REACTION {
 	INPUT_SYS,
 };
 
+
+
+
+
 typedef struct client {
-	uint8_t ID;
+	char   id[ID_SIZE_DATA];
 	char pass[PASS_SIZE];
 	HANDLE handle;
-	uint8_t temperature;
-	uint8_t humidity;
+	int temperature;
+	int humidity;
 	bool status;
-	time_t timestamp;
+	struct tm timestamp;
 }DATA;
 
 static DATA g_recive_data = { 0 };
@@ -54,24 +57,28 @@ int main_screen();//管理選択肢のメイン画面を表示する。
 void ToSend_order_screen();//クライアントを対象とした選択画面を表示する。
 
 
-void get_log();//起動時に直近６時間分の情報を外部フォルダから取得する。
+void show_logFile();//起動時に直近６時間分の情報を外部フォルダから取得する。
 void error_reaction(int mode);//設定したモードのリアクションを表示する。
 
 int show_FileContents(FILE* address_file);//外部フォルダに保存された情報を一覧表示する。
-void get_FileContents();//外部フォルダから必要な情報を獲得する。
+void get_FileContents(DATA* temp);//外部フォルダから必要な情報を獲得する。
 void skip_FileLines(int targer, FILE* address_file);//対象のファイルポインタを与えられた行数分進める。
 
-void make_set_up();//シリアル通信機能のセットを行う。
-void send_order(uint8_t choice);//設定に従い指定したデータを送信する。
-void receive_data();//受信したデータを画面に表示する。
-void Init_struct();//構造体に保持されている情報を初期化する。
+void setup_connection();//シリアル通信機能のセットを行う。
+void send_order(uint8_t choice, DATA* temp);//設定に従い指定したデータを送信する。
+void receive_data(DATA* temp);//受信したデータを画面に表示する。
+void close_connection();//構造体に保持されている情報を初期化する。
 
 int input_check(int lowest, int highest);//上下限のある入力の際に入力内容が範囲内かチェックする。
+void get_time(DATA* temp);//現在時刻を取得する
+
+void test();////////////////////////////////////////////////////////most
+
 
 void main(void) {
 	printf("外部フォルダを確認\n");
 	printf("直近六時間のデータを表示\n");
-	get_log();
+	show_logFile();
 	int choice = 0;
 	bool end_flag = true;
 
@@ -81,13 +88,16 @@ void main(void) {
 		switch (choice) {
 
 		case SHOW_LOG:
-			get_log();
+			show_logFile();
 			break;
 
 		case CLIENT_CONTROL:
 			ToSend_order_screen();
 			break;
-		
+		case 999:
+			test();
+			break;
+
 		default:
 			end_flag = false;
 		}
@@ -103,8 +113,8 @@ int main_screen() {
 	printf("0:データログの確認\n");
 	printf("1:クライアントへの命令\n");
 	printf("それ以外:管理画面の終了\n");
-
-	choice = input_check(SHOW_LOG,CLIENT_CONTROL);
+//CLIENT_CONTROL
+	choice = input_check(SHOW_LOG,999);
 
 	rewind(stdin);
 	return(choice);
@@ -123,27 +133,30 @@ void ToSend_order_screen() {
 		return;
 	}
 
-	get_FileContents();
-	make_set_up();
+	get_FileContents(&g_recive_data);
+	setup_connection();
 
 	switch (choice) {
+
 	case SHOW_STATUS:
-		send_order(choice);
-		receive_data();
+		send_order(choice,&g_recive_data);
+		receive_data(&g_recive_data);
 		break;
+
 	case SEND_ORDER:
-		printf("未実装");
+		printf("未実装\n");
 		break;
 
 
 	default: break;
 	}
-	Init_struct();
+	test();/////////////////////////////////////////////////////////////most
+	close_connection();
 }
 
-void get_log() {//todo;
+void show_logFile() {//todo;
 	FILE* fp;
-	char temp_header[HEADER_SIZE] = { 0 };
+	char temp_header[LOG_SIZE] = { 0 };
 	int count = 0;
 
 
@@ -153,9 +166,32 @@ void get_log() {//todo;
 		return;
 	}
 
-	while (fgets(temp_header, HEADER_SIZE, fp) != NULL && count < CHECK_DATA) {
-		printf("%s\n", temp_header);
+	while (fgets(temp_header, LOG_SIZE, fp) != NULL && count < CHECK_DATA) {
+		printf("%s", temp_header);
+		count++;
 	}
+
+	fclose(fp);
+}
+
+void write_logFile(DATA* temp) {
+	FILE* fp;
+	char temp_header[LOG_SIZE] = { 0 };
+
+	fp = fopen("Client_Log.txt", "ab");
+	if (fp == NULL) {
+		error_reaction(FILE_SYS);
+		return;
+	}
+	get_time(temp);
+	fprintf(fp, "%s,%d,%d,%d,%d,%d,%d\n",
+		temp->id,
+		temp->temperature,
+	   (temp->timestamp.tm_year + 1900),
+	   (temp->timestamp.tm_mon + 1),
+		temp->timestamp.tm_mday,
+		temp->timestamp.tm_hour,
+		temp->timestamp.tm_min);
 
 	fclose(fp);
 }
@@ -172,14 +208,13 @@ int show_FileContents(FILE* address_file) {
 	return(count);
 }
 
-void get_FileContents() {
+void get_FileContents(DATA* temp) {
 	char  address_data[ADDRESS_DATA] = { 0 };
 	char* id = NULL;
 	char* port = NULL;
 	int count = 0;
 	int choice = INPUT_CHECK;
 	FILE* fp;
-	DATA temp = g_recive_data;
 
 	fp = fopen("Client_address.txt", "rb");
 	if (fp == NULL) {
@@ -206,10 +241,9 @@ void get_FileContents() {
 	id = strtok(address_data, ",\r\n");
 	port = strtok(NULL, ",\r\n");
 
-	strcpy(temp.pass, port);
+	strcpy(temp->pass, port);
+	strcpy(temp->id, id);
 
-
-	g_recive_data = temp;
 	printf("対象：%s\n", id);
 	printf("\n");
 }
@@ -221,7 +255,7 @@ void skip_FileLines(int targer, FILE* address_file) {
 	}
 }
 
-void make_set_up() {
+void setup_connection() {
 	HANDLE client;
 	DATA temp = g_recive_data;
 
@@ -252,28 +286,46 @@ void make_set_up() {
 	g_recive_data = temp;
 }
 
-void send_order(uint8_t choice) {
+void send_order(uint8_t choice , DATA* temp) {
 	uint8_t order = choice;
 	DWORD result = 0;
-	DATA temp = g_recive_data;
+	
 
-	WriteFile(temp.handle, &order, 1, &result, NULL);
+	WriteFile(temp->handle, &order, 1, &result, NULL);
 	if (result == 1) {
 		printf("送信に成功\n");
 	}
 	else  printf("エラー: %d\n", GetLastError());
 }
 
-void receive_data() {
-	char answer[LOG_SIZE] = { 0 };
+void receive_data(DATA* temp) {
+	char answer[LOG_SIZE] = { 0 };////////////tode:size
 	DWORD resurt = 0;
-	DATA temp = g_recive_data;
+	int choice;
 
-	if (ReadFile(temp.handle, answer, sizeof(answer), &resurt, NULL) != 0) {
+	if (ReadFile(temp->handle, answer, sizeof(answer), &resurt, NULL) != 0) {
 		printf("受信に成功\n");
 	}
 	else printf("エラー番号: %d\n", GetLastError());
-	printf("%s", answer);
+	printf("%28s\n", answer);
+
+	printf("取得した値をログに保存しますか？\n");
+	printf("yes : 1\n");
+	printf("no  : 0\n");
+
+	choice = input_check(0, 1);
+	if (choice > SHOW_STATUS || SEND_ORDER < choice) {
+		return;
+	}
+
+	switch (choice) {
+	case 0:
+		return;
+	case 1:
+		temp->temperature = (int)atoi(answer);
+		write_logFile(&g_recive_data);
+		break;
+	}
 }
 
 int input_check(int lowest, int highest) {
@@ -313,7 +365,33 @@ void error_reaction(int mode) {
 	}
 }
 
-void Init_struct() {
+void close_connection() {
 	CloseHandle(g_recive_data.handle);
 	g_recive_data = (DATA){ 0 };
+}
+
+void get_time(DATA* temp) {
+	time_t now = time(NULL);
+	temp->timestamp = *localtime(&now);
+}
+
+void test() {//////////////////////////////////////////////////////////most
+	printf("%s\n",g_recive_data.id);
+	printf("%s\n",g_recive_data.pass);
+	printf("%d\n",g_recive_data.temperature);
+	printf("%d\n",g_recive_data.humidity);
+	printf("%p\n",g_recive_data.handle);
+	printf("%d\n",g_recive_data.status);
+
+	printf("\n");
+	
+	printf("時間構造体：%d：%d：%d：%d：%d：%d：\n",
+		(g_recive_data.timestamp.tm_year+1900),
+		(g_recive_data.timestamp.tm_mon+1), 
+		 g_recive_data.timestamp.tm_mday, 
+		 g_recive_data.timestamp.tm_hour, 
+		 g_recive_data.timestamp.tm_min, 
+		 g_recive_data.timestamp.tm_sec
+	);
+	
 }

@@ -12,7 +12,36 @@ const int SW3 = A3;
 const int POT = A0;
 const int BUZZ = 3;
 
+const int SDI = 8;
+const int CLK = 7;
+const int LCH = 4;
+
 DHT dht(5, 11);
+
+//７セグLedを点灯させるにあたっての値
+const uint8_t digi[] = {
+  0xEF,  // 0セグ　一番右
+  0xDF,  // 1セグ
+  0xBF,  // 2セグ
+  0x7F,  // 3セグ
+  0xff   // 消灯コマンド
+};
+
+const uint8_t nump[] = {
+  0xFC,  // 0
+  0x60,  // 1
+  0xDA,  // 2
+  0xF2,  // 3
+  0x66,  // 4
+  0xB6,  // 5
+  0xBE,  // 6
+  0xE4,  // 7
+  0xFE,  // 8
+  0xF6,  // 9
+  0xFF   //消灯コマンド　10
+};
+
+static int g_temper[4] = { 0, 0, 6, 2 };
 
 enum HOST_SIDE_COMMAND {
   RESPONSE_TEMP = 1,
@@ -22,16 +51,19 @@ enum HOST_SIDE_COMMAND {
 
 bool g_status = false;
 
-void power_flip();
-void power_onSign();
-void power_OffSign();
-void power_react();
+void power_flip();     //電源スイッチ
+void power_onSign();   //電源ON時の挙動
+void power_OffSign();  //Off字の挙動
+void power_react();    //電源の入り切りの際の挙動を決める
 
-void to_receive_react();
-void Action_select(int command);
-void clean_Receive_Buff();
+void to_receive_react();          //受信時の挙動を決める
+void action_select(int command);  //受信時の挙動を決めている
+void clean_Receive_Buff();        //受信バッファのデータを全消去する
 
-int get_temper();
+int get_temper();  //センサーから温度と湿度を取得する
+
+void Seg_choice(uint8_t dig, uint8_t num);  //引数digに対応するセグメントLedに、numの値を送信する。
+void temperMonitor_OnOff(bool status);         //セグメントLed点灯
 
 void setup() {
   Serial.begin(9600);
@@ -50,12 +82,17 @@ void setup() {
   pinMode(SW2, INPUT_PULLUP);
   pinMode(SW3, INPUT_PULLUP);
 
+  pinMode(SDI, OUTPUT);
+  pinMode(CLK, OUTPUT);
+  pinMode(LCH, OUTPUT);
+
   dht.begin();
 }
 
 void loop() {
   power_flip();
   to_receive_react();
+  temperMonitor_OnOff(g_status);
 }
 
 void power_flip() {
@@ -65,8 +102,7 @@ void power_flip() {
     g_status = !g_status;
     loop_lock = true;
     power_react();
-  }
-  else if (digitalRead(SW2) == HIGH) {
+  } else if (digitalRead(SW2) == HIGH) {
     loop_lock = false;
   }
 }
@@ -111,25 +147,33 @@ void power_OffSign() {
   }
 }
 
+void power_react() {
+
+  if (g_status == true) {
+    power_onSign();
+
+  } else if (g_status == false) {
+    power_OffSign();
+    clean_Receive_Buff();
+  }
+}
+
 void to_receive_react() {
   int incomingChar;
 
   if (Serial.available() > 0) {
-
     incomingChar = Serial.read();
 
     if (g_status == false && incomingChar != 3) {
       Serial.println("PowerIsOff");
       Serial.read();
-    }
-    else if (g_status == true || incomingChar == 3) {
-      Action_select(incomingChar);
+    } else if (g_status == true || incomingChar == 3) {
+      action_select(incomingChar);
     }
   }
 }
 
-void Action_select(int command) {
-
+void action_select(int command) {
   switch (command) {
 
     case RESPONSE_TEMP:
@@ -152,7 +196,7 @@ void Action_select(int command) {
 int get_temper() {
 
   float temper = dht.readTemperature();
-  float humid  = dht.readHumidity();
+  float humid = dht.readHumidity();
 
   Serial.print("humid:");
   Serial.print(humid);
@@ -166,13 +210,43 @@ void clean_Receive_Buff() {
   }
 }
 
-void power_react() {
+void Seg_choice(uint8_t dig, uint8_t num) {
+  digitalWrite(LCH, LOW);
+  shiftOut(SDI, CLK, LSBFIRST, nump[num]);
+  shiftOut(SDI, CLK, LSBFIRST, digi[dig]);
+  digitalWrite(LCH, HIGH);
+}
 
-  if (g_status == false) {
-    power_onSign();
+void get_pushSw() {
+  static bool loop_lock1 = false;
+  static bool loop_lock2 = false;
+
+
+
+  if (digitalRead(SW1) == LOW && !loop_lock1) {
+    loop_lock1 = true;
+  } else if (digitalRead(SW1) == HIGH) {
+    loop_lock1 = false;
   }
-  else if (g_status == true) {
-    power_OffSign();
-    clean_Receive_Buff();
+
+  if (digitalRead(SW3) == LOW && !loop_lock2) {
+    loop_lock2 = true;
+  } else if (digitalRead(SW3) == HIGH) {
+    loop_lock2 = false;
   }
 }
+
+void temperMonitor_OnOff(bool status) {
+  static int count = 0;
+
+  if (status == true) {
+    Seg_choice(count, g_temper[count]);
+    count++;
+  } else if (status == false) {
+      Seg_choice(4, 10);
+  }
+  if (count >= 4) {
+    count = 0;
+  }
+}
+

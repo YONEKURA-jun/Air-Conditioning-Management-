@@ -1,4 +1,3 @@
-これは現状に合わせた README 用で十分だと思います。
 
 AirCon Manager
 

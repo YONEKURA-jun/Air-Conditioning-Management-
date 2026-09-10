@@ -26,6 +26,7 @@
 #define PASS_SIZE 6
 #define ADDRESS_DATA 15
 #define CHECK_DATA 8
+#define CONNECT_TEST 255
 
 
 enum MAIN_SCREEN {
@@ -44,11 +45,14 @@ enum ERROR_REACTION {
 	INPUT_SYS,
 	STRUCT_SYS,
 	WINDOWS_SYS,
+	PINGPONG_SYS,
+	CONNECT_SYS,
 };
 
 enum ORDER {
 	CHANGE_TEMP = 1,
 	POWER_ON_OFF = 2,
+	PING_PONG = 255,
 };
 
 enum CHOICE {
@@ -66,7 +70,7 @@ typedef struct client {
 	struct tm timestamp;
 }DATA;
 
-static DATA g_recive_data = { 0 };
+DATA g_recive_data = { 0 };
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 	if (msg == WM_DEVICECHANGE) {
@@ -106,6 +110,10 @@ HWND setup_MassageWindow(HINSTANCE  hInst);//ì¬‚µ‚½ƒEƒBƒ“ƒhƒE‚ÌƒZƒbƒgƒAƒbƒv‚ğ
 void message_waiting();//‘}”²‚ªŒŸo‚³‚ê‚é‚Ü‚Å‚Ì“®ì‚ğ’è‚ß‚Ä‚¢‚éB
 void set_port_monitoring();//ŒŸo‚Ì—v¿‚©‚ç‘Ò‹@ó‘Ô‚Ü‚Å‚ªŠi”[‚³‚ê‚Ä‚¢‚éB
 
+void PingPong_address_File(DATA* temp);//b’è
+void remove_address();//ŠO•”ƒAƒhƒŒƒX‚©‚çÚ‘±‚ª–³Œø‚Èƒ‚ƒm‚ğÁ‹‚·‚éB
+
+
 void test();////////////////////////////////////////////////////////most
 
 
@@ -113,8 +121,10 @@ void main(void) {
 	printf("ŠO•”ƒtƒHƒ‹ƒ_‚ğŠm”F\n");
 	printf("’¼‹ß˜ZŠÔ‚Ìƒf[ƒ^‚ğ•\¦\n");
 	show_logFile();
-	int choice = 0;
+	remove_address(&g_recive_data);
 
+	int choice = 0;
+	
 	HANDLE hThread = CreateThread(NULL, 0, port_monitoring_thread, NULL, 0, NULL);
 	if (hThread != NULL) {
 		CloseHandle(hThread);
@@ -215,7 +225,6 @@ DWORD WINAPI port_monitoring_thread(LPVOID pParam) {
 	set_port_monitoring();
 	return 0;
 }
-
 
 void show_logFile() {//todo;
 	FILE* fp;
@@ -329,6 +338,8 @@ void setup_connection(DATA* temp) {
 		0,
 		NULL
 	);
+
+
 	DCB dcb = { 0 };
 	dcb.DCBlength = sizeof(DCB);
 	GetCommState(client, &dcb);
@@ -344,18 +355,22 @@ void setup_connection(DATA* temp) {
 	SetCommTimeouts(client, &time_out);
 
 	temp->handle = client;
+
 }
 
 void send_order(int choice, DATA* temp) {
 	uint8_t order = choice;
 	DWORD result = 0;
-
-
+	
 	WriteFile(temp->handle, &order, 1, &result, NULL);
 	if (result == 1) {
 		printf("‘—M\n");
 	}
-	else  printf("ƒGƒ‰[: %d\n", GetLastError());
+	else {
+		error_reaction(CONNECT_SYS);
+		temp->status = false;
+		printf("ƒGƒ‰[: %d\n", GetLastError());
+	}
 }
 
 void receive_data(int choice, DATA* temp) {
@@ -365,12 +380,15 @@ void receive_data(int choice, DATA* temp) {
 	DWORD resurt = 0;
 	int temp_choice;
 	int ret;
-
+	
+	
 	if (ReadFile(temp->handle, answer, sizeof(answer), &resurt, NULL) != 0) {
 		printf("óM\n");
 	}
 	else printf("ƒGƒ‰[”Ô†: %d\n", GetLastError());
 
+	
+	
 	ret = sscanf(answer, "%[^,],%d", temp_data, &status);
 	if (ret != 2) {
 		error_reaction(COMM_SYS);
@@ -380,6 +398,8 @@ void receive_data(int choice, DATA* temp) {
 		printf("%s\n", temp_data);
 		return;
 	}
+
+
 	switch (choice) {
 
 	case SHOW_STATUS:
@@ -439,6 +459,11 @@ void receive_data(int choice, DATA* temp) {
 			temp->temperature = tempf;
 		}
 		break;
+
+	case PING_PONG:
+		temp->status = true;
+		break;
+
 	default:return;
 	}
 }
@@ -471,7 +496,6 @@ void get_time(DATA* temp) {
 	temp->timestamp = *localtime(&now);
 }
 
-
 void set_DevicePort_LighatHouse(HWND hwnd) {
 	DEV_BROADCAST_DEVICEINTERFACE lighthouse = { 0 };
 	lighthouse.dbcc_size = sizeof(DEV_BROADCAST_DEVICEINTERFACE);
@@ -491,21 +515,22 @@ void set_DevicePort_LighatHouse(HWND hwnd) {
 HWND setup_MassageWindow(HINSTANCE  hInst) {
 
 	HWND hwnd = CreateWindowEx(
-		0,                      
-		TEXT("lighthouce"),     
-		NULL,                   
-		0,                      
-		0, 0, 0, 0,             
-		HWND_MESSAGE,    
-		NULL,     
-		hInst,    
-		NULL                    
+		0,
+		TEXT("lighthouce"),
+		NULL,
+		0,
+		0, 0, 0, 0,
+		HWND_MESSAGE,
+		NULL,
+		hInst,
+		NULL
 	);
 
 	if (hwnd == NULL) {
 		error_reaction(WINDOWS_SYS);
 		return NULL;
 	}
+
 	return hwnd;
 }
 
@@ -514,10 +539,10 @@ bool make_MassageWindow(HINSTANCE hInst) {
 	BOOL InitWindowClass(HINSTANCE  hwnd);
 	WNDCLASSEX wc = { 0 };
 
-	wc.cbSize = sizeof(WNDCLASSEX);            
-	wc.lpfnWndProc = WndProc;                  
-	wc.hInstance = hInst;                       
-	wc.lpszClassName = TEXT("lighthouce");     
+	wc.cbSize = sizeof(WNDCLASSEX);
+	wc.lpfnWndProc = WndProc;
+	wc.hInstance = hInst;
+	wc.lpszClassName = TEXT("lighthouce");
 
 	//(¸”s‚µ‚½‚ç 0 ‚ª•Ô‚éj
 	if (!RegisterClassEx(&wc)) {
@@ -526,11 +551,11 @@ bool make_MassageWindow(HINSTANCE hInst) {
 	return TRUE;
 }
 
-void message_waiting(){
+void message_waiting() {
 	MSG msg = { 0 };
 	while (GetMessage(&msg, NULL, 0, 0) > 0) {
-		TranslateMessage(&msg); 
-		DispatchMessage(&msg);  
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
 	}
 }
 
@@ -546,8 +571,59 @@ void set_port_monitoring() {
 		return;
 	}
 	set_DevicePort_LighatHouse(hwnd);
-	message_module();
+	message_waiting();
 }
+
+void PingPong_address_File(DATA* temp) {
+	setup_connection(temp);
+	send_order(CONNECT_TEST, temp);
+	receive_data(CONNECT_TEST, temp);
+}
+
+void remove_address() {
+	char  address_data[ADDRESS_DATA] = { 0 };
+	FILE* copy = NULL;
+	FILE* base = NULL;
+	DATA  temp = { 0 };
+
+
+	char* checker = NULL;
+	char* id = NULL;
+	char* port = NULL;
+
+	if (fopen_s(&base, "Client_address.txt", "r") != 0 ||
+		fopen_s(&copy, "temp.txt", "a") != 0) {
+		if (base != NULL) { fclose(base); }
+		if (copy != NULL) { fclose(copy); }
+		error_reaction(FILE_SYS);
+		return;
+	}
+	while (fgets(address_data, sizeof(address_data), base) != NULL) {
+		id = strtok(address_data, ",\r\n");
+		port = strtok(NULL, ",\r\n");
+		strcpy(temp.pass, port);
+		strcpy(temp.id, id);
+		printf("Šm”F‘ÎÛF%s\n", port);
+
+
+		PingPong_address_File(&temp);
+		if (temp.status == true) {
+			fprintf(copy, "%s,%s\n", temp.id, temp.pass);
+		}
+		CloseHandle(g_recive_data.handle);
+		g_recive_data = (DATA){ 0 };
+	}
+
+	fclose(base);
+	fclose(copy);
+	
+	remove("Client_address.txt");
+
+	if (rename("temp.txt", "Client_address.txt") != 0) {
+		perror("Client_address,txt‚ªÁ‚¦‚Ä‚µ‚Ü‚Á‚½");
+	}
+}
+
 
 
 void error_reaction(int mode) {
@@ -555,7 +631,7 @@ void error_reaction(int mode) {
 	switch (mode) {
 
 	case FILE_SYS:
-		printf("ƒtƒHƒ‹ƒ_‚Ö‚ÌƒAƒNƒZƒX‚É¸”s‚µ‚Ü‚µ‚½\n");
+		printf("ŠO•”ƒtƒHƒ‹ƒ_‚Ö‚ÌƒAƒNƒZƒX‚É¸”s‚µ‚Ü‚µ‚½\n");
 		break;
 
 	case COMM_SYS:
@@ -573,7 +649,12 @@ void error_reaction(int mode) {
 	case WINDOWS_SYS:
 		printf("OS‚Ö‚ÌƒAƒvƒ[ƒ`‚É¸”s‚µ‚Ü‚µ‚½\n");
 		break;
-
+	case PINGPONG_SYS:
+		printf("ƒNƒ‰ƒCƒAƒ“ƒg‚Æ‚Ì’ÊMó‹µ‚ÌŠm”F‚É¸”s‚µ‚Ü‚µ‚½\n");
+		break;
+	case CONNECT_SYS:
+		printf("”ñÚ‘±ó‘Ô\n");
+		break;
 	default:break;
 	}
 }
@@ -598,4 +679,5 @@ void test() {//////////////////////////////////////////////////////////most
 	);
 
 }
+
 

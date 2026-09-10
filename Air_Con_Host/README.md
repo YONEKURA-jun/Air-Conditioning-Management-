@@ -45,6 +45,8 @@ Arduino クライアントと Windows ホスト間のシリアル通信による
 - ログ表示
 - USBシリアルデバイス監視
 - COMポート接続・切断通知
+- クライアント自動探索
+- PING/PONG死活監視
 
 ### CLIENT
 
@@ -56,6 +58,7 @@ Arduino クライアントと Windows ホスト間のシリアル通信による
 - シリアル応答
 - 設定温度管理
 - 設定温度変更受信
+- PING応答
 
 ---
 
@@ -66,6 +69,7 @@ Arduino クライアントと Windows ホスト間のシリアル通信による
 | 0 | 温湿度取得 |
 | 1 | 温度設定変更 |
 | 2 | 電源ON/OFF |
+| 255 | PING/PONG |
 
 ### 温度変更シーケンス
 
@@ -175,6 +179,120 @@ CreateThread()
 
 ---
 
+#### クライアント自動探索
+
+起動時に登録済みクライアントへ PING を送信し、応答の無いクライアントを自動除外する機能を実装。
+
+```text
+Client_address.txt
+      ↓
+PING送信
+      ↓
+PING応答確認
+      ↓
+生存クライアント抽出
+      ↓
+アドレスファイル再構築
+```
+
+---
+
+#### PING/PONG通信
+
+クライアント接続確認用として PING/PONG 通信を追加。
+
+```text
+HOST
+  ↓
+255(PING)
+  ↓
+CLIENT
+  ↓
+ping_pong,255
+  ↓
+接続確認
+```
+
+---
+
+#### COMポート占有による通信失敗
+
+PING/PONG実装時に通信不能が発生。
+
+調査結果：
+
+```text
+CreateFileA()
+      ↓
+ERROR_ACCESS_DENIED (5)
+      ↓
+INVALID_HANDLE_VALUE
+      ↓
+WriteFile()
+      ↓
+ERROR_INVALID_HANDLE (6)
+```
+
+原因：
+
+```text
+Arduino IDE
+シリアルモニタ起動中
+      ↓
+COMポート占有
+      ↓
+CreateFileA失敗
+```
+
+対策：
+
+```text
+シリアルモニタ終了
+      ↓
+COMポート解放
+      ↓
+正常接続
+```
+
+---
+
+#### 通信プロトコル不整合
+
+PING/PONG実装中に HOST 側受信解析が失敗。
+
+調査結果：
+
+```text
+CLIENT
+      ↓
+0
+      ↓
+HOST
+      ↓
+受信解析失敗
+```
+
+原因：
+
+```text
+PowerIsOff,
+出力処理の欠落
+```
+
+対策：
+
+```text
+PowerIsOff,0
+      ↓
+HOST
+      ↓
+sscanf("%[^,],%d")
+      ↓
+正常解析
+```
+
+---
+
 ## 使用技術
 
 ### Windows
@@ -201,7 +319,6 @@ CreateThread()
 - ブザー警告
 - 自動温度制御
 - ポート再接続時の自動復旧
-- クライアント自動探索
 - ログ検索機能
 - 設定ファイル化
 - エラー処理強化
@@ -230,3 +347,7 @@ CreateThread()
 - 組み込み機器と Windows アプリケーション連携
 - ログ管理機能の実装
 - 状態管理を用いた通信制御
+- PING/PONGによる死活監視
+- Windowsエラーコードを利用した障害切り分け
+- COMポート占有時の挙動確認
+- HOST/CLIENT間通信フォーマット設計

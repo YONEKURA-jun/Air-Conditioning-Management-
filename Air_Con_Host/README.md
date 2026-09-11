@@ -47,6 +47,7 @@ Arduino クライアントと Windows ホスト間のシリアル通信による
 - COMポート接続・切断通知
 - クライアント自動探索
 - PING/PONG死活監視
+- 接続デバイスのCOMポート自動取得
 
 ### CLIENT
 
@@ -87,25 +88,18 @@ ID,温度,湿度,年,月,日,時,分
 
 0001,26.5,46.2,2026,9,4,14,35
 0002,25.8,48.7,2026,9,5,09,12
-```
 
----
-
-## Windows API 実装
-
-### シリアルポート監視
-
-- RegisterDeviceNotification()
-- WM_DEVICECHANGE
-- CreateWindowEx()
-- Message Only Window
-- CreateThread()
-
-### 動作概要
+Windows API 実装
+シリアルポート監視
+RegisterDeviceNotification()
+WM_DEVICECHANGE
+CreateWindowEx()
+Message Only Window
+CreateThread()
+動作概要
 
 専用監視スレッドを生成し、Message Only Window を利用して Windows からのデバイス通知を受信します。
 
-```text
 USB接続
     ↓
 WM_DEVICECHANGE
@@ -113,45 +107,34 @@ WM_DEVICECHANGE
 WndProc()
     ↓
 接続イベント処理
-```
 
----
+開発メモ
+解決済み不具合
+COMポート接続失敗
 
-## 開発メモ
+Windows改行コード \r\n により COMポート文字列末尾へ \r が混入。
 
-### 解決済み不具合
-
-#### COMポート接続失敗
-
-Windows改行コード `\r\n` により COMポート文字列末尾へ `\r` が混入。
-
-```c
 CreateFileA()
-```
+
 
 が
 
-```text
 ERROR_INVALID_NAME (123)
-```
+
 
 を返却。
 
 対策：
 
-```c
 strtok(address_data, ",\r\n");
-```
+
 
 により改行除去。
 
----
-
-#### 温度変更通信
+温度変更通信
 
 変更コマンド送信後に追加データ受信が必要となったため、クライアント側へ受信待機フラグを実装。
 
-```text
 CHANGE_TEMP
       ↓
 現在設定温度返信
@@ -161,47 +144,36 @@ CHANGE_TEMP
 新設定温度受信
       ↓
 設定値更新
-```
 
----
-
-#### デバイス監視
+デバイス監視
 
 メッセージループ実装時、GetMessage() によりメインスレッドがブロック。
 
 対策：
 
-```c
 CreateThread()
-```
+
 
 で監視専用スレッドを作成し、コンソール処理と並列実行を実現。
 
----
+クライアント自動探索
 
-#### クライアント自動探索
+起動時に登録済みクライアントへ接続確認を行い、応答の無いクライアントをアドレス一覧から自動除外する機能を実装。
 
-起動時に登録済みクライアントへ PING を送信し、応答の無いクライアントを自動除外する機能を実装。
-
-```text
 Client_address.txt
       ↓
 PING送信
       ↓
-PING応答確認
+応答確認
       ↓
-生存クライアント抽出
+有効クライアント抽出
       ↓
 アドレスファイル再構築
-```
 
----
-
-#### PING/PONG通信
+PING/PONG通信
 
 クライアント接続確認用として PING/PONG 通信を追加。
 
-```text
 HOST
   ↓
 255(PING)
@@ -211,17 +183,13 @@ CLIENT
 ping_pong,255
   ↓
 接続確認
-```
 
----
-
-#### COMポート占有による通信失敗
+COMポート占有による通信失敗
 
 PING/PONG実装時に通信不能が発生。
 
 調査結果：
 
-```text
 CreateFileA()
       ↓
 ERROR_ACCESS_DENIED (5)
@@ -231,38 +199,32 @@ INVALID_HANDLE_VALUE
 WriteFile()
       ↓
 ERROR_INVALID_HANDLE (6)
-```
+
 
 原因：
 
-```text
 Arduino IDE
 シリアルモニタ起動中
       ↓
 COMポート占有
       ↓
 CreateFileA失敗
-```
+
 
 対策：
 
-```text
 シリアルモニタ終了
       ↓
 COMポート解放
       ↓
 正常接続
-```
 
----
-
-#### 通信プロトコル不整合
+通信プロトコル不整合
 
 PING/PONG実装中に HOST 側受信解析が失敗。
 
 調査結果：
 
-```text
 CLIENT
       ↓
 0
@@ -270,18 +232,16 @@ CLIENT
 HOST
       ↓
 受信解析失敗
-```
+
 
 原因：
 
-```text
 PowerIsOff,
 出力処理の欠落
-```
+
 
 対策：
 
-```text
 PowerIsOff,0
       ↓
 HOST
@@ -289,65 +249,79 @@ HOST
 sscanf("%[^,],%d")
       ↓
 正常解析
-```
 
----
+デバイス情報取得
 
-## 使用技術
+Windows デバイス通知を利用し、接続・切断された COM デバイスをリアルタイムに検出する機能を実装。
 
-### Windows
+WM_DEVICECHANGE
+      ↓
+lParam
+      ↓
+DEV_BROADCAST_HDR
+      ↓
+DEV_BROADCAST_DEVICEINTERFACE
+      ↓
+デバイスパス取得
 
-- Win32 API
-- シリアル通信
-- デバイス通知
-- イベント駆動プログラミング
-- マルチスレッド
+COMポート自動取得
 
-### Arduino
+通知で受信したデバイスパスから、対象デバイスへ割り当てられた COM ポートを取得する機能を実装。
 
-- DHT11
-- UART通信
-- 74HC595
-- 7セグメントLED制御
-- 状態遷移制御
+デバイスパス
+      ↓
+SetupDiOpenDeviceInterfaceW()
+      ↓
+SP_DEVINFO_DATA取得
+      ↓
+SetupDiOpenDevRegKey()
+      ↓
+PortName取得
+      ↓
+COM5
 
----
-
-## 今後の実装予定
-
-- 目標温度管理機能
-- ブザー警告
-- 自動温度制御
-- ポート再接続時の自動復旧
-- ログ検索機能
-- 設定ファイル化
-- エラー処理強化
-
----
-
-## 開発環境
-
-- Visual Studio 2022
-- Arduino IDE
-- Windows 11
-- Arduino Uno R3
-
----
-
-## 学習内容
+使用技術
+Windows
+Win32 API
+シリアル通信
+デバイス通知
+SetupAPI
+イベント駆動プログラミング
+マルチスレッド
+Arduino
+DHT11
+UART通信
+74HC595
+7セグメントLED制御
+状態遷移制御
+今後の実装予定
+目標温度管理機能
+ブザー警告
+自動温度制御
+ポート再接続時の自動復旧
+ログ検索機能
+設定ファイル化
+エラー処理強化
+開発環境
+Visual Studio 2022
+Arduino IDE
+Windows 11
+Arduino Uno R3
+学習内容
 
 本開発を通じて以下を習得した。
 
-- Windows API を用いたデバイス監視
-- Message Loop の仕組み
-- Callback関数によるイベント処理
-- マルチスレッドプログラミング
-- シリアル通信プロトコル設計
-- Arduino と PC 間通信
-- 組み込み機器と Windows アプリケーション連携
-- ログ管理機能の実装
-- 状態管理を用いた通信制御
-- PING/PONGによる死活監視
-- Windowsエラーコードを利用した障害切り分け
-- COMポート占有時の挙動確認
-- HOST/CLIENT間通信フォーマット設計
+Windows API を用いたデバイス監視
+Message Loop の仕組み
+Callback関数によるイベント処理
+マルチスレッドプログラミング
+シリアル通信プロトコル設計
+Arduino と PC 間通信
+組み込み機器と Windows アプリケーション連携
+ログ管理機能の実装
+状態管理を用いた通信制御
+PING/PONGによる死活監視
+Windowsエラーコードを利用した障害切り分け
+COMポート占有時の挙動確認
+SetupAPIを利用したデバイス情報取得
+デバイス通知情報とCOMポート情報の関連付け

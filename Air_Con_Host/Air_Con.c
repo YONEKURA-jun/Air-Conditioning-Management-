@@ -72,15 +72,6 @@ typedef struct client {
 
 DATA g_recive_data = { 0 };
 
-LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-	if (msg == WM_DEVICECHANGE) {
-		// OS‚©‚ç’Ê’m‚ª—ˆ‚½‚Æ‚«‚Ìˆ—
-		printf("NICE_WORK\n");
-		return TRUE;
-	}
-	return DefWindowProc(hwnd, msg, wParam, lParam);
-}
-
 DWORD WINAPI port_monitoring_thread(LPVOID pParam);//‘}”²ŠÄŽ‹—p‚Ì•ÊƒXƒŒƒbƒh
 
 
@@ -110,11 +101,28 @@ HWND setup_MassageWindow(HINSTANCE  hInst);//ì¬‚µ‚½ƒEƒBƒ“ƒhƒE‚ÌƒZƒbƒgƒAƒbƒv‚ð
 void message_waiting();//‘}”²‚ªŒŸo‚³‚ê‚é‚Ü‚Å‚Ì“®ì‚ð’è‚ß‚Ä‚¢‚éB
 void set_port_monitoring();//ŒŸo‚Ì—v¿‚©‚ç‘Ò‹@ó‘Ô‚Ü‚Å‚ªŠi”[‚³‚ê‚Ä‚¢‚éB
 
-void PingPong_address_File(DATA* temp);//Žb’è
+void PingPong_address_File(DATA* temp);//—^‚¦‚ç‚ê‚½ƒAƒhƒŒƒX‚É‘Î‚µA’ÊMŠm”F‚Ìƒ|[ƒŠƒ“ƒO‚ðs‚¤B
 void remove_address();//ŠO•”ƒAƒhƒŒƒX‚©‚çÚ‘±‚ª–³Œø‚Èƒ‚ƒm‚ðÁ‹Ž‚·‚éB
-
+void get_inport_device(PDEV_BROADCAST_DEVICEINTERFACE base);//OS‚©‚ç‚Ì’Ê’m‚Å‘}”²‚ð”»’è‚µŒˆ‚Ü‚Á‚½“®ì‚ð•Ô‚·B
 
 void test();////////////////////////////////////////////////////////most
+void print_com_port_from_path(const wchar_t* device_path);
+
+
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+	if (msg == WM_DEVICECHANGE) {
+		if (wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) {//‘}”²‚ÉŒÀ’è‚·
+			PDEV_BROADCAST_HDR temp = (PDEV_BROADCAST_HDR)lParam;//ƒ|ƒCƒ“ƒ^‚ð’Ê’m\‘¢‘Ì‚É
+			if (temp != NULL && temp->dbch_devicetype == DBT_DEVTYP_DEVICEINTERFACE) {
+				PDEV_BROADCAST_DEVICEINTERFACE base = (PDEV_BROADCAST_DEVICEINTERFACE)temp;//ƒ|ƒCƒ“ƒ^‚ðÚ×\‘¢‘Ì‚É
+				get_inport_device(base);
+				return TRUE;
+			}
+		}
+	}
+	return DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
 
 
 void main(void) {
@@ -620,10 +628,103 @@ void remove_address() {
 	remove("Client_address.txt");
 
 	if (rename("temp.txt", "Client_address.txt") != 0) {
-		perror("Client_address,txt‚ªÁ‚¦‚Ä‚µ‚Ü‚Á‚½");
+		perror("Client_address.txt‚ªÁ‚¦‚Ä‚µ‚Ü‚Á‚½");
 	}
 }
 
+void get_inport_device(PDEV_BROADCAST_DEVICEINTERFACE base) {
+		print_com_port_from_path(base->dbcc_name);
+		printf("NICE_WORK\n");
+
+}
+
+
+void print_com_port_from_path(const wchar_t* device_path)
+{
+	if (!device_path) return;
+
+	HDEVINFO hDevInfo = SetupDiGetClassDevs(
+		&GUID_DEVINTERFACE_COMPORT,
+		NULL,
+		NULL,
+		DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+
+	if (hDevInfo == INVALID_HANDLE_VALUE) return;
+
+	SP_DEVICE_INTERFACE_DATA ifData = { 0 };
+	ifData.cbSize = sizeof(ifData);
+
+	if (!SetupDiOpenDeviceInterfaceW(
+		hDevInfo,
+		device_path,
+		0,
+		&ifData))
+	{
+		SetupDiDestroyDeviceInfoList(hDevInfo);
+		return;
+	}
+
+	DWORD required = 0;
+	SetupDiGetDeviceInterfaceDetailW(
+		hDevInfo,
+		&ifData,
+		NULL,
+		0,
+		&required,
+		NULL);
+
+	PSP_DEVICE_INTERFACE_DETAIL_DATA_W detail =
+		(PSP_DEVICE_INTERFACE_DETAIL_DATA_W)malloc(required);
+
+	if (!detail) {
+		SetupDiDestroyDeviceInfoList(hDevInfo);
+		return;
+	}
+
+	detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+
+	SP_DEVINFO_DATA devData = { 0 };
+	devData.cbSize = sizeof(devData);
+
+	if (SetupDiGetDeviceInterfaceDetailW(
+		hDevInfo,
+		&ifData,
+		detail,
+		required,
+		NULL,
+		&devData))
+	{
+		HKEY hKey = SetupDiOpenDevRegKey(
+			hDevInfo,
+			&devData,
+			DICS_FLAG_GLOBAL,
+			0,
+			DIREG_DEV,
+			KEY_READ);
+
+		if (hKey != INVALID_HANDLE_VALUE)
+		{
+			char port_name[32] = { 0 };
+			DWORD size = sizeof(port_name);
+
+			if (RegQueryValueExA(
+				hKey,
+				"PortName",
+				NULL,
+				NULL,
+				(LPBYTE)port_name,
+				&size) == ERROR_SUCCESS)
+			{
+				printf("PORT : %s\n", port_name);
+			}
+
+			RegCloseKey(hKey);
+		}
+	}
+
+	free(detail);
+	SetupDiDestroyDeviceInfoList(hDevInfo);
+}
 
 
 void error_reaction(int mode) {

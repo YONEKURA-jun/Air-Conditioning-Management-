@@ -41,19 +41,22 @@ const uint8_t nump[] = {
   0xFF   //消灯コマンド　10
 };
 
-static int g_temper[4] = { 0, 0, 6, 2 };
-
-enum HOST_SIDE_COMMAND {
-  RESPONSE_TEMP = 1,
-  CHANGE_TEMP = 2,
-  POWER_ON_OFF = 3,
-};
+int g_temper[4] = { 0, 0, 6, 2 };
 
 bool g_status = false;
+bool g_ready = false;
+
+enum HOST_SIDE_COMMAND {
+  RESPONSE_TEMP,
+  CHANGE_TEMP,
+  POWER_ON_OFF,
+  PING_PONG = 255,
+};
+
 
 void power_flip();     //電源スイッチ
 void power_onSign();   //電源ON時の挙動
-void power_OffSign();  //Off字の挙動
+void power_OffSign();  //off時の挙動
 void power_react();    //電源の入り切りの際の挙動を決める
 
 void to_receive_react();          //受信時の挙動を決める
@@ -63,7 +66,9 @@ void clean_Receive_Buff();        //受信バッファのデータを全消去�
 int get_temper();  //センサーから温度と湿度を取得する
 
 void Seg_choice(uint8_t dig, uint8_t num);  //引数digに対応するセグメントLedに、numの値を送信する。
-void temperMonitor_OnOff(bool status);         //セグメントLed点灯
+void temperMonitor_OnOff(bool status);      //セグメントLed点灯
+void SetTemp_send();                        //現在の設定温度をホストの呼びかけに返す
+void change_SetTemp(int SetTemp);           //ホストから受け取った値に設定温度を変更する。
 
 void setup() {
   Serial.begin(9600);
@@ -159,15 +164,27 @@ void power_react() {
 }
 
 void to_receive_react() {
+
   int incomingChar;
+  int host_command = 0;
 
   if (Serial.available() > 0) {
-    incomingChar = Serial.read();
 
-    if (g_status == false && incomingChar != 3) {
-      Serial.println("PowerIsOff");
+    if (g_ready == true) {
+      host_command = Serial.read();
+      change_SetTemp(host_command);
+      g_ready = false;
+      return;
+    }
+
+    incomingChar = Serial.read();
+    if (g_status == false && incomingChar != POWER_ON_OFF && incomingChar != PING_PONG) {
+      Serial.print("PowerIsOff,");
+      Serial.println(g_status);
       Serial.read();
-    } else if (g_status == true || incomingChar == 3) {
+    }
+
+    else if (g_status == true || incomingChar == POWER_ON_OFF || incomingChar == PING_PONG) {
       action_select(incomingChar);
     }
   }
@@ -181,12 +198,21 @@ void action_select(int command) {
       break;
 
     case CHANGE_TEMP:
+      SetTemp_send();
       break;
 
     case POWER_ON_OFF:
       g_status = !g_status;
       power_react();
+      Serial.print("ok,");
+      Serial.println(g_status);
       break;
+
+    case PING_PONG:
+      Serial.print("ping_pong,");
+      Serial.println("255");
+      break;
+
 
     default:
       break;
@@ -201,7 +227,9 @@ int get_temper() {
   Serial.print("humid:");
   Serial.print(humid);
   Serial.print("-temper:");
-  Serial.println(temper);
+  Serial.print(temper);
+  Serial.print(",");
+  Serial.println(g_status);
 }
 
 void clean_Receive_Buff() {
@@ -243,10 +271,24 @@ void temperMonitor_OnOff(bool status) {
     Seg_choice(count, g_temper[count]);
     count++;
   } else if (status == false) {
-      Seg_choice(4, 10);
+    Seg_choice(4, 10);
   }
   if (count >= 4) {
     count = 0;
   }
 }
 
+void SetTemp_send() {
+  float set_temper = (g_temper[3] * 1000 + g_temper[2] * 100 + g_temper[1] * 10 + g_temper[0] / 100.0f);
+  Serial.print(set_temper);
+  Serial.print(",");
+  Serial.println(g_status);
+  g_ready = true;
+}
+
+void change_SetTemp(int settemp) {
+  g_temper[0] = 0;
+  g_temper[1] = 0;
+  g_temper[2] = settemp % 10;
+  g_temper[3] = (settemp / 10) % 10;
+}

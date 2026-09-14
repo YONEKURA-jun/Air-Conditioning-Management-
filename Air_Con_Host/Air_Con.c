@@ -22,12 +22,12 @@
 #define CLIENT_NAME 21
 #define ALL_CLIENTS 15
 #define LOG_SIZE 29
-#define ID_SIZE_DATA 6
-#define PASS_SIZE 6
-#define ADDRESS_DATA 15
+#define ID_SIZE_DATA 32
+#define PASS_SIZE 32
+#define ADDRESS_DATA 32
 #define CHECK_DATA 8
 #define CONNECT_TEST 255
-
+#define MAX_PORT_NAME 32
 
 enum MAIN_SCREEN {
 	SHOW_LOG,
@@ -71,6 +71,10 @@ typedef struct client {
 }DATA;
 
 DATA g_recive_data = { 0 };
+char g_connected_devices[ID_SIZE_DATA] = { 0 };
+bool g_add_addres_flag = false;
+
+
 
 DWORD WINAPI port_monitoring_thread(LPVOID pParam);//挿抜監視用の別スレッド
 
@@ -103,21 +107,27 @@ void set_port_monitoring();//検出の要請から待機状態までが格納されている。
 
 void PingPong_address_File(DATA* temp);//与えられたアドレスに対し、通信確認のポーリングを行う。
 void remove_address();//外部アドレスから接続が無効なモノを消去する。
-void get_inport_device(PDEV_BROADCAST_DEVICEINTERFACE base);//OSからの通知で挿抜を判定し決まった動作を返す。
+void get_add_inport_device(PDEV_BROADCAST_DEVICEINTERFACE base);//OSからの通知で機器の挿入に決まった動作を返す。
+void get_com_port_from_path(const wchar_t* device_path, char port_name[MAX_PORT_NAME]);//挿入された時の情報を基に使用ポート情報を取得する。
+void add_addresFile(char port_name[MAX_PORT_NAME], bool flag);//使用ポート情報を外部フォルダに記憶する。
 
 void test();////////////////////////////////////////////////////////most
-void print_com_port_from_path(const wchar_t* device_path);
 
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 	if (msg == WM_DEVICECHANGE) {
 		if (wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) {//挿抜に限定す
-			PDEV_BROADCAST_HDR temp = (PDEV_BROADCAST_HDR)lParam;//ポインタを通知構造体に
-			if (temp != NULL && temp->dbch_devicetype == DBT_DEVTYP_DEVICEINTERFACE) {
-				PDEV_BROADCAST_DEVICEINTERFACE base = (PDEV_BROADCAST_DEVICEINTERFACE)temp;//ポインタを詳細構造体に
-				get_inport_device(base);
-				return TRUE;
+
+			if (wParam == DBT_DEVICEARRIVAL) {//挿
+				g_add_addres_flag = true;
+				PDEV_BROADCAST_HDR temp = (PDEV_BROADCAST_HDR)lParam;//ポインタを通知構造体に
+				if (temp != NULL && temp->dbch_devicetype == DBT_DEVTYP_DEVICEINTERFACE) {
+					PDEV_BROADCAST_DEVICEINTERFACE base = (PDEV_BROADCAST_DEVICEINTERFACE)temp;//ポインタを詳細構造体に
+					get_add_inport_device(base);
+					return TRUE;
+				}
 			}
+			else remove_address(); //抜
 		}
 	}
 	return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -129,10 +139,10 @@ void main(void) {
 	printf("外部フォルダを確認\n");
 	printf("直近六時間のデータを表示\n");
 	show_logFile();
-	remove_address(&g_recive_data);
+	remove_address();
 
 	int choice = 0;
-	
+
 	HANDLE hThread = CreateThread(NULL, 0, port_monitoring_thread, NULL, 0, NULL);
 	if (hThread != NULL) {
 		CloseHandle(hThread);
@@ -140,6 +150,8 @@ void main(void) {
 	bool end_flag = true;
 
 	while (end_flag != false) {
+		add_addresFile(g_connected_devices, g_add_addres_flag);
+
 		choice = INPUT_CHECK;
 		choice = main_screen();
 		switch (choice) {
@@ -154,6 +166,8 @@ void main(void) {
 
 		default:
 			end_flag = false;
+			break;
+
 		}
 	}
 }
@@ -167,7 +181,6 @@ int main_screen() {
 	printf("0:データログの確認\n");
 	printf("1:クライアントへの命令\n");
 	printf("それ以外:管理画面の終了\n");
-
 
 	choice = input_check(SHOW_LOG, CLIENT_CONTROL);
 	rewind(stdin);
@@ -369,7 +382,7 @@ void setup_connection(DATA* temp) {
 void send_order(int choice, DATA* temp) {
 	uint8_t order = choice;
 	DWORD result = 0;
-	
+
 	WriteFile(temp->handle, &order, 1, &result, NULL);
 	if (result == 1) {
 		printf("送信\n");
@@ -388,15 +401,15 @@ void receive_data(int choice, DATA* temp) {
 	DWORD resurt = 0;
 	int temp_choice;
 	int ret;
-	
-	
+
+
 	if (ReadFile(temp->handle, answer, sizeof(answer), &resurt, NULL) != 0) {
 		printf("受信\n");
 	}
 	else printf("エラー番号: %d\n", GetLastError());
 
-	
-	
+
+
 	ret = sscanf(answer, "%[^,],%d", temp_data, &status);
 	if (ret != 2) {
 		error_reaction(COMM_SYS);
@@ -624,7 +637,7 @@ void remove_address() {
 
 	fclose(base);
 	fclose(copy);
-	
+
 	remove("Client_address.txt");
 
 	if (rename("temp.txt", "Client_address.txt") != 0) {
@@ -632,19 +645,21 @@ void remove_address() {
 	}
 }
 
-void get_inport_device(PDEV_BROADCAST_DEVICEINTERFACE base) {
-		print_com_port_from_path(base->dbcc_name);
-		printf("NICE_WORK\n");
+
+
+void get_add_inport_device(PDEV_BROADCAST_DEVICEINTERFACE base) {
+	char port_name[MAX_PORT_NAME] = { 0 };
+	get_com_port_from_path(base->dbcc_name, port_name);
+	printf("新たな機器の接続がありました\n");
 
 }
 
-
-void print_com_port_from_path(const wchar_t* device_path)
+void get_com_port_from_path(const wchar_t* device_path, char port_name[MAX_PORT_NAME])
 {
-	if (!device_path) return;
+	if (!device_path) return;//安全チェック
 
-	HDEVINFO hDevInfo = SetupDiGetClassDevs(
-		&GUID_DEVINTERFACE_COMPORT,
+	HDEVINFO hDevInfo = SetupDiGetClassDevs(//情報へのアクセスハンドル取得
+		&GUID_DEVINTERFACE_COMPORT,//現在接続中のPORTの情報指定
 		NULL,
 		NULL,
 		DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
@@ -654,10 +669,10 @@ void print_com_port_from_path(const wchar_t* device_path)
 	SP_DEVICE_INTERFACE_DATA ifData = { 0 };
 	ifData.cbSize = sizeof(ifData);
 
-	if (!SetupDiOpenDeviceInterfaceW(
+	if (!SetupDiOpenDeviceInterfaceW(//上位関数で見つけてきたデバイス情報を基に直で呼び出す
 		hDevInfo,
-		device_path,
-		0,
+		device_path,//挿抜に関わる接続の情報
+		0,//対象のサイズが分からないのでここは一旦０にしている
 		&ifData))
 	{
 		SetupDiDestroyDeviceInfoList(hDevInfo);
@@ -670,10 +685,10 @@ void print_com_port_from_path(const wchar_t* device_path)
 		&ifData,
 		NULL,
 		0,
-		&required,
+		&required,//OSが必要なサイズを格納してくれるからそれを使う
 		NULL);
 
-	PSP_DEVICE_INTERFACE_DETAIL_DATA_W detail =
+	PSP_DEVICE_INTERFACE_DETAIL_DATA_W detail = //////接続系の構造体
 		(PSP_DEVICE_INTERFACE_DETAIL_DATA_W)malloc(required);
 
 	if (!detail) {
@@ -684,8 +699,7 @@ void print_com_port_from_path(const wchar_t* device_path)
 	detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
 
 	SP_DEVINFO_DATA devData = { 0 };
-	devData.cbSize = sizeof(devData);
-
+	devData.cbSize = sizeof(devData);//ここで更に詳細な情報を受け取れる構造体に入れ込んでいる
 	if (SetupDiGetDeviceInterfaceDetailW(
 		hDevInfo,
 		&ifData,
@@ -694,7 +708,7 @@ void print_com_port_from_path(const wchar_t* device_path)
 		NULL,
 		&devData))
 	{
-		HKEY hKey = SetupDiOpenDevRegKey(
+		HKEY hKey = SetupDiOpenDevRegKey(//OSの機器情報部分に触れるためのハンドル
 			hDevInfo,
 			&devData,
 			DICS_FLAG_GLOBAL,
@@ -704,26 +718,52 @@ void print_com_port_from_path(const wchar_t* device_path)
 
 		if (hKey != INVALID_HANDLE_VALUE)
 		{
-			char port_name[32] = { 0 };
-			DWORD size = sizeof(port_name);
+			DWORD size = MAX_PORT_NAME;
 
 			if (RegQueryValueExA(
 				hKey,
 				"PortName",
 				NULL,
 				NULL,
-				(LPBYTE)port_name,
-				&size) == ERROR_SUCCESS)
+				(LPBYTE)port_name, &size) == ERROR_SUCCESS)
 			{
 				printf("PORT : %s\n", port_name);
+				strcpy(g_connected_devices, port_name);
 			}
-
 			RegCloseKey(hKey);
 		}
 	}
 
 	free(detail);
 	SetupDiDestroyDeviceInfoList(hDevInfo);
+}
+
+void add_addresFile(char port_name[MAX_PORT_NAME] ,  bool flag) {
+	FILE* fp;
+	char address_id[ID_SIZE_DATA] = { 0 };
+	int checker = INPUT_CHECK;
+	int c;
+
+
+	if (flag == true) {
+		fp = fopen("Client_address.txt", "a");
+		if (fp == NULL) {
+			error_reaction(FILE_SYS);
+			return;
+		}
+		printf("接続された機器に対して名前を設定してください\n");
+		checker = scanf_s("%s", address_id, ID_SIZE_DATA);
+		rewind(stdin);
+
+		if (checker != 1) {
+			printf("名前が長すぎます、ポート名を流用致します\n");
+			strcpy(address_id, port_name);
+		}
+		fprintf(fp, "%s,%s\n", address_id, port_name);
+		fclose(fp);
+		g_add_addres_flag = false;
+	}
+
 }
 
 

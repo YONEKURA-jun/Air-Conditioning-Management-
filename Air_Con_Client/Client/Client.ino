@@ -98,6 +98,7 @@ void loop() {
   power_flip();
   to_receive_react();
   temperMonitor_OnOff(g_status);
+   get_pushSw();
 }
 
 void power_flip() {
@@ -249,19 +250,32 @@ void get_pushSw() {
   static bool loop_lock1 = false;
   static bool loop_lock2 = false;
 
-
+  int set_temp = g_temper[3] * 10 + g_temper[2];
 
   if (digitalRead(SW1) == LOW && !loop_lock1) {
     loop_lock1 = true;
-  } else if (digitalRead(SW1) == HIGH) {
+
+    if (set_temp < 99) {
+      set_temp++;
+    }
+  }
+  else if (digitalRead(SW1) == HIGH) {
     loop_lock1 = false;
   }
 
   if (digitalRead(SW3) == LOW && !loop_lock2) {
     loop_lock2 = true;
-  } else if (digitalRead(SW3) == HIGH) {
+
+    if (set_temp > 0) {
+      set_temp--;
+    }
+  }
+  else if (digitalRead(SW3) == HIGH) {
     loop_lock2 = false;
   }
+
+  g_temper[2] = set_temp % 10;
+  g_temper[3] = set_temp / 10;
 }
 
 void temperMonitor_OnOff(bool status) {

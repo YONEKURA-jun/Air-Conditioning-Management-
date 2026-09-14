@@ -61,7 +61,7 @@ enum CHOICE {
 };
 
 typedef struct client {
-	char   id[ID_SIZE_DATA];
+	char id[ID_SIZE_DATA];
 	char pass[PASS_SIZE];
 	HANDLE handle;
 	float temperature;
@@ -75,7 +75,7 @@ char g_connected_devices[ID_SIZE_DATA] = { 0 };
 bool g_add_addres_flag = false;
 
 
-
+CRITICAL_SECTION g_cs;//îrëºêßå‰ÇÃêÈåæ
 DWORD WINAPI port_monitoring_thread(LPVOID pParam);//ë}î≤äƒéãópÇÃï ÉXÉåÉbÉh
 
 
@@ -109,9 +109,7 @@ void PingPong_address_File(DATA* temp);//ó^Ç¶ÇÁÇÍÇΩÉAÉhÉåÉXÇ…ëŒÇµÅAí êMämîFÇÃÉ|Å
 void remove_address();//äOïîÉAÉhÉåÉXÇ©ÇÁê⁄ë±Ç™ñ≥å¯Ç»ÉÇÉmÇè¡ãéÇ∑ÇÈÅB
 void get_add_inport_device(PDEV_BROADCAST_DEVICEINTERFACE base);//OSÇ©ÇÁÇÃí ímÇ≈ã@äÌÇÃë}ì¸Ç…åàÇ‹Ç¡ÇΩìÆçÏÇï‘Ç∑ÅB
 void get_com_port_from_path(const wchar_t* device_path, char port_name[MAX_PORT_NAME]);//ë}ì¸Ç≥ÇÍÇΩéûÇÃèÓïÒÇäÓÇ…égópÉ|Å[ÉgèÓïÒÇéÊìæÇ∑ÇÈÅB
-void add_addresFile(char port_name[MAX_PORT_NAME], bool flag);//égópÉ|Å[ÉgèÓïÒÇäOïîÉtÉHÉãÉ_Ç…ãLâØÇ∑ÇÈÅB
-
-void test();////////////////////////////////////////////////////////most
+void add_addresFile(char port_name[ID_SIZE_DATA], bool flag);//égópÉ|Å[ÉgèÓïÒÇäOïîÉtÉHÉãÉ_Ç…ãLâØÇ∑ÇÈÅB
 
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -119,7 +117,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 		if (wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) {//ë}î≤Ç…å¿íËÇ∑
 
 			if (wParam == DBT_DEVICEARRIVAL) {//ë}
-				g_add_addres_flag = true;
 				PDEV_BROADCAST_HDR temp = (PDEV_BROADCAST_HDR)lParam;//É|ÉCÉìÉ^Çí ímç\ë¢ëÃÇ…
 				if (temp != NULL && temp->dbch_devicetype == DBT_DEVTYP_DEVICEINTERFACE) {
 					PDEV_BROADCAST_DEVICEINTERFACE base = (PDEV_BROADCAST_DEVICEINTERFACE)temp;//É|ÉCÉìÉ^Çè⁄ç◊ç\ë¢ëÃÇ…
@@ -148,9 +145,12 @@ void main(void) {
 		CloseHandle(hThread);
 	}
 	bool end_flag = true;
-
+	InitializeCriticalSection(&g_cs);
 	while (end_flag != false) {
+
+		EnterCriticalSection(&g_cs);
 		add_addresFile(g_connected_devices, g_add_addres_flag);
+		LeaveCriticalSection(&g_cs);
 
 		choice = INPUT_CHECK;
 		choice = main_screen();
@@ -225,7 +225,6 @@ void ToSend_order_screen() {
 
 	default: break;
 	}
-	test();
 	close_connection();
 }
 
@@ -645,8 +644,6 @@ void remove_address() {
 	}
 }
 
-
-
 void get_add_inport_device(PDEV_BROADCAST_DEVICEINTERFACE base) {
 	char port_name[MAX_PORT_NAME] = { 0 };
 	get_com_port_from_path(base->dbcc_name, port_name);
@@ -727,18 +724,25 @@ void get_com_port_from_path(const wchar_t* device_path, char port_name[MAX_PORT_
 				NULL,
 				(LPBYTE)port_name, &size) == ERROR_SUCCESS)
 			{
-				printf("PORT : %s\n", port_name);
+				EnterCriticalSection(&g_cs);
 				strcpy(g_connected_devices, port_name);
+				g_add_addres_flag = true;
+				LeaveCriticalSection(&g_cs);
+
+				printf("PORT : %s\n", port_name);
 			}
 			RegCloseKey(hKey);
 		}
 	}
 
+
+
+
 	free(detail);
 	SetupDiDestroyDeviceInfoList(hDevInfo);
 }
 
-void add_addresFile(char port_name[MAX_PORT_NAME] ,  bool flag) {
+void add_addresFile(char port_name[ID_SIZE_DATA], bool flag) {
 	FILE* fp;
 	char address_id[ID_SIZE_DATA] = { 0 };
 	int checker = INPUT_CHECK;
@@ -761,7 +765,11 @@ void add_addresFile(char port_name[MAX_PORT_NAME] ,  bool flag) {
 		}
 		fprintf(fp, "%s,%s\n", address_id, port_name);
 		fclose(fp);
+
+
+
 		g_add_addres_flag = false;
+		g_connected_devices[0] = 0;
 	}
 
 }
@@ -799,26 +807,3 @@ void error_reaction(int mode) {
 	default:break;
 	}
 }
-
-void test() {//////////////////////////////////////////////////////////most
-	printf("%s\n", g_recive_data.id);
-	printf("%s\n", g_recive_data.pass);
-	printf("%1f\n", g_recive_data.temperature);
-	printf("%1f\n", g_recive_data.humidity);
-	printf("%p\n", g_recive_data.handle);
-	printf("%d\n", g_recive_data.status);
-
-	printf("\n");
-
-	printf("éûä‘ç\ë¢ëÃÅF%dÅF%dÅF%dÅF%dÅF%dÅF%dÅF\n",
-		(g_recive_data.timestamp.tm_year + 1900),
-		(g_recive_data.timestamp.tm_mon + 1),
-		g_recive_data.timestamp.tm_mday,
-		g_recive_data.timestamp.tm_hour,
-		g_recive_data.timestamp.tm_min,
-		g_recive_data.timestamp.tm_sec
-	);
-
-}
-
-

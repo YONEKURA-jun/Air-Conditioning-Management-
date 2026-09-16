@@ -16,8 +16,6 @@
 #pragma comment(lib, "setupapi.lib")
 
 
-
-
 #define INPUT_CHECK -1
 #define CLIENT_NAME 21
 #define ALL_CLIENTS 15
@@ -70,6 +68,8 @@ typedef struct client {
 	struct tm timestamp;
 }DATA;
 
+
+
 DATA g_recive_data = { 0 };
 
 CRITICAL_SECTION g_cs;//排他制御の宣言
@@ -84,9 +84,8 @@ void error_reaction(int mode);//設定したモードのリアクションを表示する。
 void show_log_file();//起動時に直近６時間分の情報を外部フォルダから取得する。
 void write_log_file(DATA* temp);//対象の情報を外部フォルダに書き込む。
 
-int show_file_contents(FILE* address_file);//外部フォルダに保存された情報を一覧表示する。
+int show_file_contents(FILE* address_file, char temp_addr_datas[ALL_CLIENTS][ADDRESS_DATA]);//外部フォルダに保存された情報を一覧表示する。
 void get_file_contents(DATA* temp);//外部フォルダから必要な情報を獲得する。
-void skip_file_lines(int targer, FILE* address_file);//対象のファイルポインタを与えられた行数分進める。
 
 void setup_connection(DATA* temp);//シリアル通信機能のセットを行う。
 void send_order(float choice, DATA* temp);//設定に従い指定したデータを送信する。
@@ -111,6 +110,7 @@ void add_addresFile(char port_name[ID_SIZE_DATA], char mech_name[MAX_SIZE]);//接
 
 void show_status(char temp_data[LOG_SIZE], DATA* temp);//指定したクライアントからセンサーの値を取得し、外部フォルダに保存する事が出来る。
 void change_temp(char temp_data[LOG_SIZE], DATA* temp);//指定したクライアントから設定温度を取得し、変更する事が出来る。
+void receive_react(int choice, char temp_data[LOG_SIZE], DATA* temp);//受信時のリアクション関数。
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 	if (msg == WM_DEVICECHANGE) {
@@ -128,7 +128,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 	}
 	return DefWindowProc(hwnd, msg, wParam, lParam);
 }
-
 
 
 void main(void) {
@@ -238,13 +237,13 @@ int order_choice_screen() {
 	return(choice);
 }
 
-void show_log_file() {//todo;
+void show_log_file() {
 	FILE* fp;
 	char temp_header[LOG_SIZE] = { 0 };
 	int count = 0;
 
 
-	fp = fopen("Client_Log.txt", "r");
+	fp = fopen("Client_Log.txt", "rb");
 	if (fp == NULL) {
 		error_reaction(FILE_SYS);
 		return;
@@ -316,68 +315,55 @@ void error_reaction(int mode) {
 	}
 }
 
-int show_file_contents(FILE* address_file) {
-	char  address_data[ADDRESS_DATA] = { 0 };
+int show_file_contents(FILE* address_file, char temp_addr_datas[ALL_CLIENTS][ADDRESS_DATA]) {
 	int count = 1;
 
-	while (fgets(address_data, sizeof(address_data), address_file) != NULL) {
-		printf("%d : %s\n", count, address_data);
+	while (fgets(temp_addr_datas[count - 1], ADDRESS_DATA, address_file) != NULL) {
+		printf("%d : %s", count, temp_addr_datas[count-1]);
 		count++;
 	}
 	rewind(address_file);
-	return(count-1
-		);
+	return(count-1);
 }
 
 void get_file_contents(DATA* temp) {
 	char  address_data[ADDRESS_DATA] = { 0 };
+	char temp_addr_datas[ALL_CLIENTS][ADDRESS_DATA] = { 0 };
 	char* id = NULL;
 	char* port = NULL;
 	int count = 0;
 	int choice = INPUT_CHECK;
 	FILE* fp;
 
-
 	EnterCriticalSection(&g_cs);
 
-	fp = fopen("Client_address.txt", "rb");
+	fp = fopen("Client_address.txt", "r");
 	if (fp == NULL) {
 		error_reaction(COMM_SYS);
 		LeaveCriticalSection(&g_cs);
 		return;
 	}
-
-
-	count = show_file_contents(fp);
+	count = show_file_contents(fp, temp_addr_datas);
 	printf("対象のクライアントを選択して下さい\n");
+	
+	fclose(fp);
+	LeaveCriticalSection(&g_cs);
+
 
 	choice = input_check(1, count);
 	if (choice == INPUT_CHECK) {
 		error_reaction(INPUT_SYS);
-		fclose(fp);
-		LeaveCriticalSection(&g_cs);
 		return;
 	}
-
-	int target = choice - 1;
-	skip_file_lines(target, fp);
-
-	fgets(address_data, sizeof(address_data), fp);
-	fclose(fp);
-	LeaveCriticalSection(&g_cs);
+	
+	strcpy(address_data, temp_addr_datas[choice - 1]);
 
 	id = strtok(address_data, ",\r\n");
 	port = strtok(NULL, ",\r\n");
 	strcpy(temp->pass, port);
 	strcpy(temp->id, id);
 
-}
 
-void skip_file_lines(int targer, FILE* address_file) {
-	char  temp[ADDRESS_DATA] = { 0 };
-	for (int skip = 0; skip < targer; skip++) {
-		fgets(temp, sizeof(temp), address_file);
-	}
 }
 
 
@@ -814,9 +800,23 @@ void change_temp(char temp_data[LOG_SIZE], DATA* temp) {
 	}
 }
 
+void receive_react(int choice, char temp_data[LOG_SIZE], DATA* temp) {
+	switch (choice) {
+
+	case SHOW_STATUS:
+		show_status(temp_data, temp);
+		break;
+
+	case CHANGE_TEMP:
+		change_temp(temp_data, temp);
+		break;
+
+	case PING_PONG:
+		temp->status = true;
+		break;
+
+	default:return;
+	}
 
 
-
-
-
-
+}

@@ -1,1 +1,1 @@
-test7,COM5
+USB シリアル デバイス,COM5

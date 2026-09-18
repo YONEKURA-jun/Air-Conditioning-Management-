@@ -44,10 +44,10 @@ const uint8_t nump[] = {
 int g_temper[4] = { 0, 0, 6, 2 };
 
 bool g_status = false;
-bool g_ready = false;
 
 enum HOST_SIDE_COMMAND {
   RESPONSE_TEMP,
+  SHOW_TEMP,
   CHANGE_TEMP,
   POWER_ON_OFF,
   PING_PONG = 255,
@@ -98,7 +98,7 @@ void loop() {
   power_flip();
   to_receive_react();
   temperMonitor_OnOff(g_status);
-   get_pushSw();
+  get_pushSw();
 }
 
 void power_flip() {
@@ -165,41 +165,37 @@ void power_react() {
 }
 
 void to_receive_react() {
-
-  int incomingChar;
-  int host_command = 0;
+  static bool standby = false;
 
   if (Serial.available() > 0) {
 
-    if (g_ready == true) {
-      host_command = Serial.read();
-      change_SetTemp(host_command);
-      g_ready = false;
-      return;
-    }
-
-    incomingChar = Serial.read();
+    int incomingChar = Serial.read();
     if (g_status == false && incomingChar != POWER_ON_OFF && incomingChar != PING_PONG) {
       Serial.print("PowerIsOff,");
       Serial.println(g_status);
       Serial.read();
-    }
-
-    else if (g_status == true || incomingChar == POWER_ON_OFF || incomingChar == PING_PONG) {
-      action_select(incomingChar);
-    }
+    } else if (standby == true) {
+      change_SetTemp(incomingChar);
+      standby = !standby;
+    } else action_select(incomingChar, &standby);
   }
 }
 
-void action_select(int command) {
-  switch (command) {
+void action_select(int command, bool *standby) {
+  int host_command = 0;
 
+  switch (command) {
     case RESPONSE_TEMP:
       get_temper();
       break;
 
+    case SHOW_TEMP:
+      SetTemp_send();
+      break;
+
     case CHANGE_TEMP:
       SetTemp_send();
+      *standby = true;
       break;
 
     case POWER_ON_OFF:
@@ -213,7 +209,6 @@ void action_select(int command) {
       Serial.print("ping_pong,");
       Serial.println("255");
       break;
-
 
     default:
       break;
@@ -258,8 +253,7 @@ void get_pushSw() {
     if (set_temp < 99) {
       set_temp++;
     }
-  }
-  else if (digitalRead(SW1) == HIGH) {
+  } else if (digitalRead(SW1) == HIGH) {
     loop_lock1 = false;
   }
 
@@ -269,8 +263,7 @@ void get_pushSw() {
     if (set_temp > 0) {
       set_temp--;
     }
-  }
-  else if (digitalRead(SW3) == HIGH) {
+  } else if (digitalRead(SW3) == HIGH) {
     loop_lock2 = false;
   }
 
@@ -297,7 +290,6 @@ void SetTemp_send() {
   Serial.print(set_temper);
   Serial.print(",");
   Serial.println(g_status);
-  g_ready = true;
 }
 
 void change_SetTemp(int settemp) {

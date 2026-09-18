@@ -48,8 +48,9 @@ enum ERROR_REACTION {
 };
 
 enum ORDER {
-	CHANGE_TEMP = 1,
-	POWER_ON_OFF = 2,
+	SHOW_TEMP = 1,
+	CHANGE_TEMP = 2,
+	POWER_ON_OFF = 3,
 	PING_PONG = 255,
 };
 
@@ -88,7 +89,7 @@ int show_file_contents(FILE* address_file, char temp_addr_datas[ALL_CLIENTS][ADD
 void get_file_contents(DATA* temp);//外部フォルダから必要な情報を獲得する。
 
 void setup_connection(DATA* temp);//シリアル通信機能のセットを行う。
-void send_order(float choice, DATA* temp);//設定に従い指定したデータを送信する。
+void send_order(int choice, DATA* temp);//設定に従い指定したデータを送信する。
 void receive_data(int choice, DATA* temp);//受信したデータを画面に表示する。
 void close_connection();//構造体に保持されている情報を初期化する。
 
@@ -104,12 +105,13 @@ void set_port_monitoring();//検出の要請から待機状態までが格納されている。
 void pingpong_address_file(DATA* temp);//与えられたアドレスに対し、通信確認のポーリングを行う。
 void remove_address();//外部アドレスから接続が無効なモノを消去する。
 void get_add_inport_device(PDEV_BROADCAST_DEVICEINTERFACE base);//OSからの通知で機器の挿入に決まった動作を返す。
-void get_com_port_from_path(const wchar_t* device_path, char port_name[MAX_SIZE], char mech_name[MAX_SIZE]);//挿入された時の情報を基に使用ポート情報を取得する。
-void add_addresFile(char port_name[ID_SIZE_DATA], char mech_name[MAX_SIZE]);//接続情報を外部フォルダに記憶する。
+void get_com_port_from_path(const wchar_t* device_path, char port_name[ID_SIZE_DATA], char mech_name[ADDRESS_DATA]);//挿入された時の情報を基に使用ポート情報を取得する。
+void add_addresFile(char port_name[ID_SIZE_DATA], char mech_name[ADDRESS_DATA]);//接続情報を外部フォルダに記憶する。
 
 
 void show_status(char temp_data[LOG_SIZE], DATA* temp);//指定したクライアントからセンサーの値を取得し、外部フォルダに保存する事が出来る。
-void change_temp(char temp_data[LOG_SIZE], DATA* temp);//指定したクライアントから設定温度を取得し、変更する事が出来る。
+void change_temp(char temp_data[LOG_SIZE], DATA* temp);//指定したクライアントから設定温度を取得し、変更する。
+void show_temp(char temp_data[LOG_SIZE], DATA* temp);//指定したクライアントから設定温度を取得し、表示する。
 void receive_react(int choice, char temp_data[LOG_SIZE], DATA* temp);//受信時のリアクション関数。
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -139,7 +141,9 @@ void main(void) {
 	int choice = 0;
 
 
-	
+
+
+
 	HANDLE hThread = CreateThread(NULL, 0, port_monitoring_thread, NULL, 0, NULL);
 	if (hThread != NULL) {
 		CloseHandle(hThread);
@@ -151,6 +155,7 @@ void main(void) {
 		choice = INPUT_CHECK;
 		choice = main_screen();
 		switch (choice) {
+
 
 		case SHOW_LOG:
 			show_log_file();
@@ -226,12 +231,13 @@ void to_send_order_screen() {
 
 int order_choice_screen() {
 	printf("クライアントに指示する内容を選択してください\n");
-	printf("1:設定温度の変更\n");
-	printf("2:電源のON/OFF\n");
+	printf("1:設定温度の確認\n");
+	printf("2:設定温度の変更\n");
+	printf("3:電源のON/OFF\n");
 	printf("それ以外:前の画面に戻る\n");
 
-	int choice = input_check(CHANGE_TEMP, POWER_ON_OFF);
-	if (choice < CHANGE_TEMP || POWER_ON_OFF < choice) {
+	int choice = input_check(SHOW_TEMP, POWER_ON_OFF);
+	if (choice < SHOW_TEMP || POWER_ON_OFF < choice) {
 		return(INPUT_CHECK);
 	}
 	return(choice);
@@ -249,7 +255,8 @@ void show_log_file() {
 		return;
 	}
 
-	while (fgets(temp_header, LOG_SIZE, fp) != NULL && count < CHECK_DATA) {
+	while (count <= ALL_CLIENTS &&
+		fgets(temp_header, LOG_SIZE, fp) != NULL && count < CHECK_DATA) {
 		printf("%s", temp_header);
 		count++;
 	}
@@ -278,7 +285,6 @@ void write_log_file(DATA* temp) {
 		temp->timestamp.tm_min);
 	fclose(fp);
 }
-
 
 
 void error_reaction(int mode) {
@@ -316,14 +322,14 @@ void error_reaction(int mode) {
 }
 
 int show_file_contents(FILE* address_file, char temp_addr_datas[ALL_CLIENTS][ADDRESS_DATA]) {
-	int count = 1;
+	int count = 0;
 
-	while (fgets(temp_addr_datas[count - 1], ADDRESS_DATA, address_file) != NULL) {
-		printf("%d : %s", count, temp_addr_datas[count-1]);
+	while (count < ALL_CLIENTS && fgets(temp_addr_datas[count], ADDRESS_DATA, address_file) != NULL) {
+		printf("%d : %s", count + 1, temp_addr_datas[count]);
 		count++;
 	}
 	rewind(address_file);
-	return(count-1);
+	return count;
 }
 
 void get_file_contents(DATA* temp) {
@@ -344,22 +350,30 @@ void get_file_contents(DATA* temp) {
 		return;
 	}
 	count = show_file_contents(fp, temp_addr_datas);
-	printf("対象のクライアントを選択して下さい\n");
-	
+
+
 	fclose(fp);
 	LeaveCriticalSection(&g_cs);
 
+	if (count == 0) {
+		printf("クライアントが存在しません\n");
+		return;
+	}
 
+	printf("対象のクライアントを選択して下さい\n");
 	choice = input_check(1, count);
 	if (choice == INPUT_CHECK) {
 		error_reaction(INPUT_SYS);
 		return;
 	}
-	
+
 	strcpy(address_data, temp_addr_datas[choice - 1]);
 
 	id = strtok(address_data, ",\r\n");
 	port = strtok(NULL, ",\r\n");
+	if (id == NULL || port == NULL)
+		return;
+
 	strcpy(temp->pass, port);
 	strcpy(temp->id, id);
 
@@ -379,6 +393,11 @@ void setup_connection(DATA* temp) {
 		0,
 		NULL
 	);
+	if (client == INVALID_HANDLE_VALUE) {
+		temp->handle = NULL;
+		return;
+	}
+
 
 
 	DCB dcb = { 0 };
@@ -399,67 +418,63 @@ void setup_connection(DATA* temp) {
 
 }
 
-void send_order(float choice, DATA* temp) {
+void send_order(int choice, DATA* temp) {
 	uint8_t order = choice;
 	DWORD result = 0;
-
-	WriteFile(temp->handle, &order, 1, &result, NULL);
-	if (result == 1) {
-		printf("\n");
+	if (temp->handle != NULL &&
+		temp->handle != INVALID_HANDLE_VALUE) {
+		WriteFile(temp->handle, &order, 1, &result, NULL);
+		if (result == 1) {
+			printf("\n");
+		}
+		else {
+			error_reaction(CONNECT_SYS);
+			temp->status = false;
+			printf("エラー: %d\n", GetLastError());
+		}
+		printf("SEND=%d\n", order);
 	}
-	else {
-		error_reaction(CONNECT_SYS);
-		temp->status = false;
-		printf("エラー: %d\n", GetLastError());
-	}
+	else error_reaction(CONNECT_SYS);
 }
+
 
 void receive_data(int choice, DATA* temp) {
 	char answer[LOG_SIZE] = { 0 };
 	char temp_data[LOG_SIZE] = { 0 };
-	int status = false;
+	int ping_success = false;
 	DWORD resurt = 0;
-	int temp_choice;
 	int ret;
 
-	if (ReadFile(temp->handle, answer, sizeof(answer), &resurt, NULL) != 0) {
-		printf("\n");
+	if (temp->handle != NULL &&
+		temp->handle != INVALID_HANDLE_VALUE) {
+
+		if (ReadFile(temp->handle, answer, sizeof(answer), &resurt, NULL) != 0) {
+			printf("\n");
+		}
+		else printf("エラー番号: %d\n", GetLastError());
+
+		ret = sscanf(answer, "%28[^,],%d", temp_data, &ping_success);
+		if (ret != 2) {
+			error_reaction(COMM_SYS);
+			ping_success = false;
+		}
+		if (ping_success == false) {
+			printf("%s\n", temp_data);
+			return;
+		}
+		receive_react(choice, temp_data, temp);
 	}
-	else printf("エラー番号: %d\n", GetLastError());
-
-	ret = sscanf(answer, "%[^,],%d", temp_data, &status);
-	if (ret != 2) {
-		error_reaction(COMM_SYS);
-		status = false;
-	}
-	if (status == false) {
-		printf("%s\n", temp_data);
-		return;
-	}
-
-
-	switch (choice) {
-
-	case SHOW_STATUS:
-		show_status(temp_data, temp);
-		break;
-
-	case CHANGE_TEMP:
-		change_temp(temp_data,temp);
-		break;
-
-	case PING_PONG:
-		temp->status = true;
-		break;
-
-	default:return;
-	}
+	else error_reaction(CONNECT_SYS);
 }
 
 void close_connection() {
-	PurgeComm(g_recive_data.handle, PURGE_RXCLEAR);
-	PurgeComm(g_recive_data.handle, PURGE_TXCLEAR);
-	CloseHandle(g_recive_data.handle);
+	if (g_recive_data.handle != NULL &&
+		g_recive_data.handle != INVALID_HANDLE_VALUE) {
+
+		PurgeComm(g_recive_data.handle, PURGE_RXCLEAR);
+		PurgeComm(g_recive_data.handle, PURGE_TXCLEAR);
+		CloseHandle(g_recive_data.handle);
+	}
 	g_recive_data = (DATA){ 0 };
 }
 
@@ -571,10 +586,13 @@ DWORD WINAPI port_monitoring_thread(LPVOID pParam) {
 
 
 void pingpong_address_file(DATA* temp) {
+	if (temp->handle == NULL) {
+		error_reaction(CONNECT_SYS);
+		return;
+	}
 	setup_connection(temp);
 	send_order(CONNECT_TEST, temp);
 	receive_data(CONNECT_TEST, temp);
-
 
 	PurgeComm(temp->handle, PURGE_RXCLEAR);
 	PurgeComm(temp->handle, PURGE_TXCLEAR);
@@ -603,6 +621,12 @@ void remove_address() {
 	while (fgets(address_data, sizeof(address_data), base) != NULL) {
 		id = strtok(address_data, ",\r\n");
 		port = strtok(NULL, ",\r\n");
+		if (id == NULL || port == NULL) {
+			fclose(base);
+			fclose(copy);
+			LeaveCriticalSection(&g_cs);
+			return;
+		}
 		strcpy(temp.pass, port);
 		strcpy(temp.id, id);
 
@@ -625,6 +649,8 @@ void remove_address() {
 		perror("Client_address.txtが消えてしまった");
 	}
 	LeaveCriticalSection(&g_cs);
+	PurgeComm(g_recive_data.handle, PURGE_RXCLEAR);
+	PurgeComm(g_recive_data.handle, PURGE_TXCLEAR);
 }
 
 void get_add_inport_device(PDEV_BROADCAST_DEVICEINTERFACE base) {
@@ -635,7 +661,7 @@ void get_add_inport_device(PDEV_BROADCAST_DEVICEINTERFACE base) {
 	add_addresFile(port_name, mech_name);
 }
 
-void get_com_port_from_path(const wchar_t* device_path, char port_name[MAX_SIZE], char mech_name[MAX_SIZE]) {
+void get_com_port_from_path(const wchar_t* device_path, char port_name[ID_SIZE_DATA], char mech_name[ADDRESS_DATA]) {
 
 	if (!device_path) return;//安全チェック
 
@@ -718,7 +744,7 @@ void get_com_port_from_path(const wchar_t* device_path, char port_name[MAX_SIZE]
 	SetupDiDestroyDeviceInfoList(hDevInfo);
 }
 
-void add_addresFile(char port_name[ID_SIZE_DATA], char mech_name[MAX_SIZE]) {
+void add_addresFile(char port_name[ID_SIZE_DATA], char mech_name[ADDRESS_DATA]) {
 	FILE* fp;
 
 	EnterCriticalSection(&g_cs);
@@ -775,29 +801,27 @@ void change_temp(char temp_data[LOG_SIZE], DATA* temp) {
 	if (ret != 1) {
 		error_reaction(STRUCT_SYS);
 	}
-	printf("現在の設定温度: %.1f", temp->temperature);
-	printf("設定温度を変更しますか？\n");
-	printf("yes : 1\n");
-	printf("no  : 0\n");
+	printf("現在の設定温度: %.1f\n", temp->temperature);
+	printf("0度から９９度の間で設定して下さい\n");
 
-
-	temp_choice = input_check(NO, YES);
-	if (temp_choice < NO || YES < temp_choice) {
+	int tempf = input_check(0, 99);
+	if (tempf < 0 || 99 < tempf) {
 		error_reaction(INPUT_SYS);
 		return;
 	}
-	if (temp_choice == 0) {
-		return;
+	temp->temperature = tempf;
+}
+
+void show_temp(char temp_data[LOG_SIZE], DATA* temp) {
+	int ret;
+
+
+	ret = sscanf(temp_data, "%f", &temp->temperature);
+	if (ret != 1) {
+		error_reaction(STRUCT_SYS);
 	}
-	else {
-		printf("0度から９９度の間で設定して下さい\n");
-		float tempf = input_check(0, 99);
-		if (tempf < 0 || 99 < tempf) {
-			error_reaction(INPUT_SYS);
-			return;
-		}
-		temp->temperature = tempf;
-	}
+	printf("現在の設定温度: %.1f\n", temp->temperature);
+
 }
 
 void receive_react(int choice, char temp_data[LOG_SIZE], DATA* temp) {
@@ -805,6 +829,10 @@ void receive_react(int choice, char temp_data[LOG_SIZE], DATA* temp) {
 
 	case SHOW_STATUS:
 		show_status(temp_data, temp);
+		break;
+
+	case SHOW_TEMP:
+		show_temp(temp_data, temp);
 		break;
 
 	case CHANGE_TEMP:

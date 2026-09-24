@@ -1,6 +1,11 @@
 #include <DHT.h>
 #include <OneWire.h>
 
+#define TEMP_DATA_RANGE_MIN 100  // hostが設定温度変更操作をした際、指定される値の最小値 (0度 + 100)
+#define TEMP_DATA_RANGE_MAX 199  // 上記同、値の最大値 (99度 + 100)
+#define TEMP_OFFSET_VALUE 100    // 判定の為に足す数字
+
+
 const int LED1 = 13;
 const int LED2 = 12;
 const int LED3 = 11;
@@ -63,7 +68,7 @@ void to_receive_react();          //受信時の挙動を決める
 void action_select(int command);  //受信時の挙動を決めている
 void clean_Receive_Buff();        //受信バッファのデータを全消去する
 
-int get_temper();  //センサーから温度と湿度を取得する
+void get_temper();  //センサーから温度と湿度を取得する
 
 void Seg_choice(uint8_t dig, uint8_t num);  //引数digに対応するセグメントLedに、numの値を送信する。
 void temperMonitor_OnOff(bool status);      //セグメントLed点灯
@@ -165,23 +170,22 @@ void power_react() {
 }
 
 void to_receive_react() {
-  static bool standby = false;
-
   if (Serial.available() > 0) {
-
     int incomingChar = Serial.read();
     if (g_status == false && incomingChar != POWER_ON_OFF && incomingChar != PING_PONG) {
       Serial.print("PowerIsOff,");
       Serial.println(g_status);
       Serial.read();
-    } else if (standby == true) {
-      change_SetTemp(incomingChar);
-      standby = !standby;
-    } else action_select(incomingChar, &standby);
+    } else if (TEMP_DATA_RANGE_MIN <= incomingChar && incomingChar <= TEMP_DATA_RANGE_MAX) {
+      int real_temp = incomingChar - TEMP_OFFSET_VALUE;
+      change_SetTemp(real_temp);
+      Serial.print("temper_receive,");
+      Serial.println(g_status);
+    } else action_select(incomingChar);
   }
 }
 
-void action_select(int command, bool *standby) {
+void action_select(int command) {
   int host_command = 0;
 
   switch (command) {
@@ -191,11 +195,6 @@ void action_select(int command, bool *standby) {
 
     case SHOW_TEMP:
       SetTemp_send();
-      break;
-
-    case CHANGE_TEMP:
-      SetTemp_send();
-      *standby = true;
       break;
 
     case POWER_ON_OFF:
@@ -215,7 +214,7 @@ void action_select(int command, bool *standby) {
   }
 }
 
-int get_temper() {
+void get_temper() {
 
   float temper = dht.readTemperature();
   float humid = dht.readHumidity();

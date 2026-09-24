@@ -26,6 +26,8 @@
 #define CHECK_DATA 8
 #define CONNECT_TEST 255
 #define MAX_SIZE 256
+#define TEMP_OFFSET_VALUE  100  //クライアント側設定温度の変更時、判定の為に足す数字
+
 
 enum MAIN_SCREEN {
 	SHOW_LOG,
@@ -110,7 +112,7 @@ void add_addresFile(char port_name[ID_SIZE_DATA], char mech_name[ADDRESS_DATA]);
 
 
 void show_status(char temp_data[LOG_SIZE], DATA* temp);//指定したクライアントからセンサーの値を取得し、外部フォルダに保存する事が出来る。
-void change_temp(char temp_data[LOG_SIZE], DATA* temp);//指定したクライアントから設定温度を取得し、変更する。
+void change_temp(DATA* temp);//指定したクライアントの設定温度を変更する。
 void show_temp(char temp_data[LOG_SIZE], DATA* temp);//指定したクライアントから設定温度を取得し、表示する。
 void receive_react(int choice, char temp_data[LOG_SIZE], DATA* temp);//受信時のリアクション関数。
 
@@ -217,10 +219,16 @@ void to_send_order_screen() {
 			close_connection();
 			return;
 		}
-		send_order(choice, &g_recive_data);
-		receive_data(choice, &g_recive_data);
 		if (choice == CHANGE_TEMP) {
+			change_temp(&g_recive_data);
 			send_order((int)g_recive_data.temperature, &g_recive_data);
+			receive_data(CHANGE_TEMP, &g_recive_data);
+
+		}
+
+		else {
+			send_order(choice, &g_recive_data);
+			receive_data(choice, &g_recive_data);
 		}
 		break;
 
@@ -586,11 +594,14 @@ DWORD WINAPI port_monitoring_thread(LPVOID pParam) {
 
 
 void pingpong_address_file(DATA* temp) {
-	if (temp->handle == NULL) {
+	
+	setup_connection(temp);
+	if (temp->handle == NULL ||
+		temp->handle == INVALID_HANDLE_VALUE) {
 		error_reaction(CONNECT_SYS);
 		return;
 	}
-	setup_connection(temp);
+
 	send_order(CONNECT_TEST, temp);
 	receive_data(CONNECT_TEST, temp);
 
@@ -792,16 +803,9 @@ void show_status(char temp_data[LOG_SIZE], DATA* temp) {
 
 }
 
-void change_temp(char temp_data[LOG_SIZE], DATA* temp) {
-	int temp_choice;
-	int ret;
+void change_temp(DATA* temp) {
 
-
-	ret = sscanf(temp_data, "%f", &temp->temperature);
-	if (ret != 1) {
-		error_reaction(STRUCT_SYS);
-	}
-	printf("現在の設定温度: %.1f\n", temp->temperature);
+	printf("対象の設定温度を変更致します\n");
 	printf("0度から９９度の間で設定して下さい\n");
 
 	int tempf = input_check(0, 99);
@@ -809,7 +813,7 @@ void change_temp(char temp_data[LOG_SIZE], DATA* temp) {
 		error_reaction(INPUT_SYS);
 		return;
 	}
-	temp->temperature = tempf;
+	temp->temperature = (tempf + TEMP_OFFSET_VALUE);
 }
 
 void show_temp(char temp_data[LOG_SIZE], DATA* temp) {
@@ -833,10 +837,6 @@ void receive_react(int choice, char temp_data[LOG_SIZE], DATA* temp) {
 
 	case SHOW_TEMP:
 		show_temp(temp_data, temp);
-		break;
-
-	case CHANGE_TEMP:
-		change_temp(temp_data, temp);
 		break;
 
 	case PING_PONG:

@@ -26,7 +26,7 @@
 #define CHECK_DATA 8
 #define CONNECT_TEST 255
 #define MAX_SIZE 256
-#define TEMP_OFFSET_VALUE  100  //クライアント側設定温度の変更時、判定の為に足す数字
+#define UNUSED 0
 
 
 enum MAIN_SCREEN {
@@ -49,7 +49,12 @@ enum ERROR_REACTION {
 	CONNECT_SYS,
 };
 
-enum ORDER {
+enum TO_CLIENT_ACTION {
+	GET_SET_TEMP = 1,
+};
+
+
+enum TO_CLIENT_ORDER {
 	SHOW_TEMP = 1,
 	CHANGE_TEMP = 2,
 	POWER_ON_OFF = 3,
@@ -73,8 +78,6 @@ typedef struct client {
 
 
 
-DATA g_recive_data = { 0 };
-
 CRITICAL_SECTION g_cs;//排他制御の宣言
 DWORD WINAPI port_monitoring_thread(LPVOID pParam);//挿抜監視用の別スレッド
 
@@ -91,9 +94,9 @@ int show_file_contents(FILE* address_file, char temp_addr_datas[ALL_CLIENTS][ADD
 void get_file_contents(DATA* temp);//外部フォルダから必要な情報を獲得する。
 
 void setup_connection(DATA* temp);//シリアル通信機能のセットを行う。
-void send_order(int choice, DATA* temp);//設定に従い指定したデータを送信する。
+void send_order(int choice, int send_data, DATA* temp);//設定に従い指定したデータを送信する。
 void receive_data(int choice, DATA* temp);//受信したデータを画面に表示する。
-void close_connection();//構造体に保持されている情報を初期化する。
+void close_connection(DATA* temp_struct);//構造体に保持されている情報を初期化する。
 
 int input_check(int lowest, int highest);//上下限のある入力の際に入力内容が範囲内かチェックする。
 void get_time(DATA* temp);//現在時刻を取得する
@@ -192,8 +195,9 @@ int main_screen() {
 
 void to_send_order_screen() {
 	int choice = INPUT_CHECK;
+	DATA temp_struct = { 0 };
 
-	printf("0:クライアントの現在の状態を知りたい\n");
+	printf("0:クライアントの状態を確認する\n");
 	printf("1:クライアントへ命令を送る\n");
 	printf("それ以外:戻る\n");
 
@@ -202,39 +206,36 @@ void to_send_order_screen() {
 		error_reaction(INPUT_SYS);
 		return;
 	}
+	get_file_contents(&temp_struct);
+	if (temp_struct.pass[0] == '\0') return;
+	setup_connection(&temp_struct);
 
-	get_file_contents(&g_recive_data);
-	setup_connection(&g_recive_data);
+	if (choice == SEND_ORDER) {
+		choice = order_choice_screen();
+		if (choice == INPUT_CHECK) {
+			close_connection(&temp_struct);
+			return;
+		}
+	}
 
 	switch (choice) {
 
 	case SHOW_STATUS:
-		send_order(choice, &g_recive_data);
-		receive_data(choice, &g_recive_data);
+	case SHOW_TEMP:
+	case POWER_ON_OFF:
+		send_order(choice, UNUSED, &temp_struct);
+		receive_data(choice, &temp_struct);
 		break;
 
-	case SEND_ORDER:
-		choice = order_choice_screen();
-		if (choice == INPUT_CHECK) {
-			close_connection();
-			return;
-		}
-		if (choice == CHANGE_TEMP) {
-			change_temp(&g_recive_data);
-			send_order((int)g_recive_data.temperature, &g_recive_data);
-			receive_data(CHANGE_TEMP, &g_recive_data);
-
-		}
-
-		else {
-			send_order(choice, &g_recive_data);
-			receive_data(choice, &g_recive_data);
-		}
+	case CHANGE_TEMP:
+		send_order(GET_SET_TEMP, UNUSED, &temp_struct);
+		receive_data(choice, &temp_struct);
+		send_order(choice, temp_struct.temperature, &temp_struct);
 		break;
 
-	default: break;
+	default:break;
 	}
-	close_connection();
+	close_connection(&temp_struct);
 }
 
 int order_choice_screen() {
@@ -242,12 +243,13 @@ int order_choice_screen() {
 	printf("1:設定温度の確認\n");
 	printf("2:設定温度の変更\n");
 	printf("3:電源のON/OFF\n");
-	printf("それ以外:前の画面に戻る\n");
+	printf("それ以外:管理画面に戻る\n");
 
 	int choice = input_check(SHOW_TEMP, POWER_ON_OFF);
 	if (choice < SHOW_TEMP || POWER_ON_OFF < choice) {
 		return(INPUT_CHECK);
 	}
+
 	return(choice);
 }
 
@@ -426,13 +428,21 @@ void setup_connection(DATA* temp) {
 
 }
 
-void send_order(int choice, DATA* temp) {
-	uint8_t order = choice;
+void send_order(int choice, int send_data, DATA* temp) {
+	uint8_t order[2] = {choice,send_data};
 	DWORD result = 0;
+
+	printf("CMD=%d DATA=%d TX=[%u,%u]\n",
+		choice,
+		send_data,
+		order[0],
+		order[1]);
+
+
 	if (temp->handle != NULL &&
 		temp->handle != INVALID_HANDLE_VALUE) {
-		WriteFile(temp->handle, &order, 1, &result, NULL);
-		if (result == 1) {
+		WriteFile(temp->handle, order, 2, &result, NULL);
+		if (result == 2) {
 			printf("\n");
 		}
 		else {
@@ -440,9 +450,11 @@ void send_order(int choice, DATA* temp) {
 			temp->status = false;
 			printf("エラー: %d\n", GetLastError());
 		}
-		printf("SEND=%d\n", order);
+		printf("SEND=%d\n", order[0]);
 	}
 	else error_reaction(CONNECT_SYS);
+
+
 }
 
 
@@ -462,6 +474,9 @@ void receive_data(int choice, DATA* temp) {
 		else printf("エラー番号: %d\n", GetLastError());
 
 		ret = sscanf(answer, "%28[^,],%d", temp_data, &ping_success);
+		printf("ret=%d, answer=[%s], temp_data=[%s], ping=%d, bytes=%lu\n", ret, answer, temp_data, ping_success, resurt);
+
+
 		if (ret != 2) {
 			error_reaction(COMM_SYS);
 			ping_success = false;
@@ -475,15 +490,15 @@ void receive_data(int choice, DATA* temp) {
 	else error_reaction(CONNECT_SYS);
 }
 
-void close_connection() {
-	if (g_recive_data.handle != NULL &&
-		g_recive_data.handle != INVALID_HANDLE_VALUE) {
+void close_connection(DATA* temp) {
+	if (temp->handle != NULL &&
+		temp->handle != INVALID_HANDLE_VALUE) {
 
-		PurgeComm(g_recive_data.handle, PURGE_RXCLEAR);
-		PurgeComm(g_recive_data.handle, PURGE_TXCLEAR);
-		CloseHandle(g_recive_data.handle);
+		PurgeComm(temp->handle, PURGE_RXCLEAR);
+		PurgeComm(temp->handle, PURGE_TXCLEAR);
+		CloseHandle(temp->handle);
 	}
-	g_recive_data = (DATA){ 0 };
+	*temp = (DATA){ 0 };
 }
 
 
@@ -594,7 +609,7 @@ DWORD WINAPI port_monitoring_thread(LPVOID pParam) {
 
 
 void pingpong_address_file(DATA* temp) {
-	
+
 	setup_connection(temp);
 	if (temp->handle == NULL ||
 		temp->handle == INVALID_HANDLE_VALUE) {
@@ -602,7 +617,7 @@ void pingpong_address_file(DATA* temp) {
 		return;
 	}
 
-	send_order(CONNECT_TEST, temp);
+	send_order(CONNECT_TEST, UNUSED, temp);
 	receive_data(CONNECT_TEST, temp);
 
 	PurgeComm(temp->handle, PURGE_RXCLEAR);
@@ -619,6 +634,7 @@ void remove_address() {
 	char* checker = NULL;
 	char* id = NULL;
 	char* port = NULL;
+	
 
 	EnterCriticalSection(&g_cs);
 	if (fopen_s(&base, "Client_address.txt", "r") != 0 ||
@@ -646,7 +662,6 @@ void remove_address() {
 		if (temp.status == true) {
 			fprintf(copy, "%s,%s\n", temp.id, temp.pass);
 		}
-
 		temp = (DATA){ 0 };
 	}
 
@@ -660,8 +675,7 @@ void remove_address() {
 		perror("Client_address.txtが消えてしまった");
 	}
 	LeaveCriticalSection(&g_cs);
-	PurgeComm(g_recive_data.handle, PURGE_RXCLEAR);
-	PurgeComm(g_recive_data.handle, PURGE_TXCLEAR);
+
 }
 
 void get_add_inport_device(PDEV_BROADCAST_DEVICEINTERFACE base) {
@@ -794,7 +808,7 @@ void show_status(char temp_data[LOG_SIZE], DATA* temp) {
 	else {
 		ret = sscanf(temp_data, "humid:%f-temper:%f", &temp->humidity, &temp->temperature);
 		if (ret == 2) {
-			write_log_file(&g_recive_data);
+			write_log_file(temp);
 		}
 		else {
 			error_reaction(STRUCT_SYS);
@@ -813,12 +827,11 @@ void change_temp(DATA* temp) {
 		error_reaction(INPUT_SYS);
 		return;
 	}
-	temp->temperature = (tempf + TEMP_OFFSET_VALUE);
+	temp->temperature = tempf;
 }
 
 void show_temp(char temp_data[LOG_SIZE], DATA* temp) {
 	int ret;
-
 
 	ret = sscanf(temp_data, "%f", &temp->temperature);
 	if (ret != 1) {
@@ -837,6 +850,11 @@ void receive_react(int choice, char temp_data[LOG_SIZE], DATA* temp) {
 
 	case SHOW_TEMP:
 		show_temp(temp_data, temp);
+		break;
+
+	case CHANGE_TEMP:
+		show_temp(temp_data, temp);
+		change_temp(temp);
 		break;
 
 	case PING_PONG:

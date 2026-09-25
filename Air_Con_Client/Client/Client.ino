@@ -1,11 +1,6 @@
 #include <DHT.h>
 #include <OneWire.h>
 
-#define TEMP_DATA_RANGE_MIN 100  // hostが設定温度変更操作をした際、指定される値の最小値 (0度 + 100)
-#define TEMP_DATA_RANGE_MAX 199  // 上記同、値の最大値 (99度 + 100)
-#define TEMP_OFFSET_VALUE 100    // 判定の為に足す数字
-
-
 const int LED1 = 13;
 const int LED2 = 12;
 const int LED3 = 11;
@@ -159,7 +154,6 @@ void power_OffSign() {
 }
 
 void power_react() {
-
   if (g_status == true) {
     power_onSign();
 
@@ -170,23 +164,20 @@ void power_react() {
 }
 
 void to_receive_react() {
-  if (Serial.available() > 0) {
+
+  if (Serial.available() >= 2) {
+
     int incomingChar = Serial.read();
     if (g_status == false && incomingChar != POWER_ON_OFF && incomingChar != PING_PONG) {
       Serial.print("PowerIsOff,");
       Serial.println(g_status);
       Serial.read();
-    } else if (TEMP_DATA_RANGE_MIN <= incomingChar && incomingChar <= TEMP_DATA_RANGE_MAX) {
-      int real_temp = incomingChar - TEMP_OFFSET_VALUE;
-      change_SetTemp(real_temp);
-      Serial.print("temper_receive,");
-      Serial.println(g_status);
     } else action_select(incomingChar);
   }
 }
 
 void action_select(int command) {
-  int host_command = 0;
+
 
   switch (command) {
     case RESPONSE_TEMP:
@@ -195,6 +186,11 @@ void action_select(int command) {
 
     case SHOW_TEMP:
       SetTemp_send();
+      break;
+
+    case CHANGE_TEMP:
+      int host_command = Serial.read();
+      change_SetTemp(host_command);
       break;
 
     case POWER_ON_OFF:
@@ -212,6 +208,7 @@ void action_select(int command) {
     default:
       break;
   }
+  clean_Receive_Buff();
 }
 
 void get_temper() {

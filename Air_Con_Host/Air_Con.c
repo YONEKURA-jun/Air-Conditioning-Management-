@@ -7,9 +7,9 @@
 #include <stdlib.h>
 #include <time.h>
 #include <stdint.h>
-#include <Windows.h>
 #include <string.h>
 
+#include <Windows.h>
 #include <setupapi.h>
 #include <devguid.h>
 #include <dbt.h>
@@ -29,13 +29,8 @@
 #define UNUSED 0
 
 
-enum MAIN_SCREEN {
+enum SCREENS_USER_CHOICE {
 	SHOW_LOG,
-	CLIENT_CONTROL,
-};
-
-enum CLIENT_SCREEN {
-	SHOW_STATUS,
 	SEND_ORDER,
 };
 
@@ -49,16 +44,20 @@ enum ERROR_REACTION {
 	CONNECT_SYS,
 };
 
-enum TO_CLIENT_ACTION {
-	GET_SET_TEMP = 1,
+
+enum CLIENT_COMMAND {
+	GET_SENSOR_STATUS,
+	GET_TEMP,
+	SET_TEMP,
+	PING_PONG = 255,
 };
 
 
-enum TO_CLIENT_ORDER {
-	SHOW_TEMP = 1,
-	CHANGE_TEMP = 2,
-	POWER_ON_OFF = 3,
-	PING_PONG = 255,
+enum USER_REQUEST {
+	SHOW_SENSOR_STATUS,
+	SHOW_TEMP,
+	CHANGE_TEMP,
+	POWER_ON_OFF,
 };
 
 enum CHOICE {
@@ -159,6 +158,7 @@ void main(void) {
 
 		choice = INPUT_CHECK;
 		choice = main_screen();
+
 		switch (choice) {
 
 
@@ -166,7 +166,7 @@ void main(void) {
 			show_log_file();
 			break;
 
-		case CLIENT_CONTROL:
+		case SEND_ORDER:
 			to_send_order_screen();
 			break;
 
@@ -188,7 +188,7 @@ int main_screen() {
 	printf("1:クライアントへの命令\n");
 	printf("それ以外:管理画面の終了\n");
 
-	choice = input_check(SHOW_LOG, CLIENT_CONTROL);
+	choice = input_check(SHOW_LOG, SEND_ORDER);
 	rewind(stdin);
 	return(choice);
 }
@@ -197,30 +197,19 @@ void to_send_order_screen() {
 	int choice = INPUT_CHECK;
 	DATA temp_struct = { 0 };
 
-	printf("0:クライアントの状態を確認する\n");
-	printf("1:クライアントへ命令を送る\n");
-	printf("それ以外:戻る\n");
-
-	choice = input_check(SHOW_STATUS, SEND_ORDER);
-	if (choice < SHOW_STATUS || SEND_ORDER < choice) {
+	choice = order_choice_screen();
+	if (choice == INPUT_CHECK) {
 		error_reaction(INPUT_SYS);
 		return;
 	}
+
 	get_file_contents(&temp_struct);
 	if (temp_struct.pass[0] == '\0') return;
 	setup_connection(&temp_struct);
 
-	if (choice == SEND_ORDER) {
-		choice = order_choice_screen();
-		if (choice == INPUT_CHECK) {
-			close_connection(&temp_struct);
-			return;
-		}
-	}
-
 	switch (choice) {
 
-	case SHOW_STATUS:
+	case SHOW_SENSOR_STATUS:
 	case SHOW_TEMP:
 	case POWER_ON_OFF:
 		send_order(choice, UNUSED, &temp_struct);
@@ -228,9 +217,11 @@ void to_send_order_screen() {
 		break;
 
 	case CHANGE_TEMP:
-		send_order(GET_SET_TEMP, UNUSED, &temp_struct);
+		send_order(GET_TEMP, UNUSED, &temp_struct);
 		receive_data(choice, &temp_struct);
-		send_order(choice, temp_struct.temperature, &temp_struct);
+		if (temp_struct.temperature >= 0) {
+			send_order(choice, temp_struct.temperature, &temp_struct);
+		}
 		break;
 
 	default:break;
@@ -240,13 +231,15 @@ void to_send_order_screen() {
 
 int order_choice_screen() {
 	printf("クライアントに指示する内容を選択してください\n");
+	printf("\n");
+	printf("0:センサーの確認\n");
 	printf("1:設定温度の確認\n");
 	printf("2:設定温度の変更\n");
 	printf("3:電源のON/OFF\n");
 	printf("それ以外:管理画面に戻る\n");
 
-	int choice = input_check(SHOW_TEMP, POWER_ON_OFF);
-	if (choice < SHOW_TEMP || POWER_ON_OFF < choice) {
+	int choice = input_check(SHOW_SENSOR_STATUS, POWER_ON_OFF);
+	if (choice < SHOW_SENSOR_STATUS || POWER_ON_OFF < choice) {
 		return(INPUT_CHECK);
 	}
 
@@ -256,7 +249,7 @@ int order_choice_screen() {
 void show_log_file() {
 	FILE* fp;
 	char temp_header[LOG_SIZE] = { 0 };
-	int count = 0;
+
 
 
 	fp = fopen("Client_Log.txt", "rb");
@@ -265,10 +258,8 @@ void show_log_file() {
 		return;
 	}
 
-	while (count <= ALL_CLIENTS &&
-		fgets(temp_header, LOG_SIZE, fp) != NULL && count < CHECK_DATA) {
+	while (fgets(temp_header, LOG_SIZE, fp) != NULL) {
 		printf("%s", temp_header);
-		count++;
 	}
 
 	fclose(fp);
@@ -278,7 +269,7 @@ void write_log_file(DATA* temp) {
 	FILE* fp;
 	char temp_header[LOG_SIZE] = { 0 };
 
-	fp = fopen("Client_Log.txt", "a");
+	fp = fopen("Client_Log.txt", "ab");
 	if (fp == NULL) {
 		error_reaction(FILE_SYS);
 		return;
@@ -353,7 +344,7 @@ void get_file_contents(DATA* temp) {
 
 	EnterCriticalSection(&g_cs);
 
-	fp = fopen("Client_address.txt", "r");
+	fp = fopen("Client_address.txt", "rb");
 	if (fp == NULL) {
 		error_reaction(COMM_SYS);
 		LeaveCriticalSection(&g_cs);
@@ -366,7 +357,7 @@ void get_file_contents(DATA* temp) {
 	LeaveCriticalSection(&g_cs);
 
 	if (count == 0) {
-		printf("クライアントが存在しません\n");
+		printf("接続中のクライアントが存在しません\n");//クライアントと非接続状態の際、危険な状態に繋がらない様に弾く
 		return;
 	}
 
@@ -408,35 +399,34 @@ void setup_connection(DATA* temp) {
 		return;
 	}
 
-
-
 	DCB dcb = { 0 };
 	dcb.DCBlength = sizeof(DCB);
 	GetCommState(client, &dcb);
 	dcb.BaudRate = CBR_9600;
 	dcb.ByteSize = 8;
 	dcb.StopBits = ONESTOPBIT;
+	dcb.fDtrControl = DTR_CONTROL_DISABLE;//この一文で明示的に指示されないDTRに対する動作を停止
 	SetCommState(client, &dcb);
+
+	EscapeCommFunction(client, CLRDTR);//ポートに待機状態を明示的に指示する事で安定
 
 	COMMTIMEOUTS time_out = { 0 };
 	GetCommTimeouts(client, &time_out);
 	time_out.ReadIntervalTimeout = 50;
+	time_out.ReadTotalTimeoutMultiplier = 1;
 	time_out.ReadTotalTimeoutConstant = 1000;
+
+	time_out.WriteTotalTimeoutMultiplier = 0;
+	time_out.WriteTotalTimeoutConstant = 1000;
+
 	SetCommTimeouts(client, &time_out);
 
 	temp->handle = client;
-
 }
 
 void send_order(int choice, int send_data, DATA* temp) {
-	uint8_t order[2] = {choice,send_data};
+	uint8_t order[2] = { choice,send_data };
 	DWORD result = 0;
-
-	printf("CMD=%d DATA=%d TX=[%u,%u]\n",
-		choice,
-		send_data,
-		order[0],
-		order[1]);
 
 
 	if (temp->handle != NULL &&
@@ -457,7 +447,6 @@ void send_order(int choice, int send_data, DATA* temp) {
 
 }
 
-
 void receive_data(int choice, DATA* temp) {
 	char answer[LOG_SIZE] = { 0 };
 	char temp_data[LOG_SIZE] = { 0 };
@@ -465,17 +454,17 @@ void receive_data(int choice, DATA* temp) {
 	DWORD resurt = 0;
 	int ret;
 
+
+
 	if (temp->handle != NULL &&
 		temp->handle != INVALID_HANDLE_VALUE) {
-
 		if (ReadFile(temp->handle, answer, sizeof(answer), &resurt, NULL) != 0) {
 			printf("\n");
 		}
 		else printf("エラー番号: %d\n", GetLastError());
 
-		ret = sscanf(answer, "%28[^,],%d", temp_data, &ping_success);
-		printf("ret=%d, answer=[%s], temp_data=[%s], ping=%d, bytes=%lu\n", ret, answer, temp_data, ping_success, resurt);
 
+		ret = sscanf(answer, "%28[^,],%d", temp_data, &ping_success);
 
 		if (ret != 2) {
 			error_reaction(COMM_SYS);
@@ -550,7 +539,6 @@ bool make_massage_window(HINSTANCE hInst) {
 	wc.hInstance = hInst;
 	wc.lpszClassName = TEXT("lighthouce");
 
-	//(失敗したら 0 が返る）
 	if (!RegisterClassEx(&wc)) {
 		return FALSE;
 	}
@@ -613,14 +601,20 @@ void pingpong_address_file(DATA* temp) {
 	setup_connection(temp);
 	if (temp->handle == NULL ||
 		temp->handle == INVALID_HANDLE_VALUE) {
-		error_reaction(CONNECT_SYS);
+		printf("%s : ", temp->pass);
+		error_reaction(CONNECT_SYS);// クライアントの立ち上がりが送れる等した際に通知を送り、接続状態を知らせる
 		return;
 	}
+	printf("%s : 接続状態\n", temp->pass);
+	Sleep(2000);
+	PurgeComm(temp->handle, PURGE_RXCLEAR);
+
 
 	send_order(CONNECT_TEST, UNUSED, temp);
 	receive_data(CONNECT_TEST, temp);
 
-	PurgeComm(temp->handle, PURGE_RXCLEAR);
+
+
 	PurgeComm(temp->handle, PURGE_TXCLEAR);
 	CloseHandle(temp->handle);
 }
@@ -634,11 +628,11 @@ void remove_address() {
 	char* checker = NULL;
 	char* id = NULL;
 	char* port = NULL;
-	
+
 
 	EnterCriticalSection(&g_cs);
-	if (fopen_s(&base, "Client_address.txt", "r") != 0 ||
-		fopen_s(&copy, "temp.txt", "a") != 0) {
+	if (fopen_s(&base, "Client_address.txt", "rb") != 0 ||
+		fopen_s(&copy, "temp.txt", "ab") != 0) {
 		if (base != NULL) { fclose(base); }
 		if (copy != NULL) { fclose(copy); }
 		error_reaction(FILE_SYS);
@@ -683,12 +677,13 @@ void get_add_inport_device(PDEV_BROADCAST_DEVICEINTERFACE base) {
 	char mech_name[MAX_SIZE] = { 0 };
 
 	get_com_port_from_path(base->dbcc_name, port_name, mech_name);
+	printf("%s : 接続状態\n", port_name); //サブウィンドウの動作に付随し、接続した際に知らせる
 	add_addresFile(port_name, mech_name);
 }
 
 void get_com_port_from_path(const wchar_t* device_path, char port_name[ID_SIZE_DATA], char mech_name[ADDRESS_DATA]) {
 
-	if (!device_path) return;//安全チェック
+	if (!device_path) return;
 
 	HDEVINFO hDevInfo = SetupDiGetClassDevs(//情報へのアクセスハンドル取得
 		&GUID_DEVINTERFACE_COMPORT,//現在接続中のPORTの情報指定
@@ -820,11 +815,12 @@ void show_status(char temp_data[LOG_SIZE], DATA* temp) {
 void change_temp(DATA* temp) {
 
 	printf("対象の設定温度を変更致します\n");
-	printf("0度から９９度の間で設定して下さい\n");
+	printf("0度から９９度までしか設定出来ません\n");
 
 	int tempf = input_check(0, 99);
-	if (tempf < 0 || 99 < tempf) {
+	if (tempf < 0 || 99.0 < tempf) {
 		error_reaction(INPUT_SYS);
+		temp->temperature = INPUT_CHECK;
 		return;
 	}
 	temp->temperature = tempf;
@@ -844,7 +840,7 @@ void show_temp(char temp_data[LOG_SIZE], DATA* temp) {
 void receive_react(int choice, char temp_data[LOG_SIZE], DATA* temp) {
 	switch (choice) {
 
-	case SHOW_STATUS:
+	case SHOW_SENSOR_STATUS:
 		show_status(temp_data, temp);
 		break;
 
@@ -866,3 +862,4 @@ void receive_react(int choice, char temp_data[LOG_SIZE], DATA* temp) {
 
 
 }
+

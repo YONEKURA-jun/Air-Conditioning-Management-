@@ -58,6 +58,7 @@ enum USER_REQUEST {
 	SHOW_TEMP,
 	CHANGE_TEMP,
 	POWER_ON_OFF,
+	RESET_CLINT,
 };
 
 enum CHOICE {
@@ -81,12 +82,12 @@ CRITICAL_SECTION g_cs;//排他制御の宣言
 DWORD WINAPI port_monitoring_thread(LPVOID pParam);//挿抜監視用の別スレッド
 
 
-int main_screen();//管理選択肢のメイン画面を表示する。
-void to_send_order_screen();//クライアントを対象とした選択画面を表示する。
-int order_choice_screen();//クライアントへ送信する命令選択画面。
+int  main_screen();//管理選択肢のメイン画面を表示する。
+void run_order_menu();//対象のクライアントへの命令に合わせた分岐を行う。
+int  order_choice_screen();//クライアントへ送信する命令選択画面。
 
 void error_reaction(int mode);//設定したモードのリアクションを表示する。
-void show_log_file();//起動時に直近６時間分の情報を外部フォルダから取得する。
+void show_log_file();//起動時に直近のログ情報を外部フォルダから取得する。
 void write_log_file(DATA* temp);//対象の情報を外部フォルダに書き込む。
 
 int show_file_contents(FILE* address_file, char temp_addr_datas[ALL_CLIENTS][ADDRESS_DATA]);//外部フォルダに保存された情報を一覧表示する。
@@ -94,8 +95,8 @@ void get_file_contents(DATA* temp);//外部フォルダから必要な情報を獲得する。
 
 void setup_connection(DATA* temp);//シリアル通信機能のセットを行う。
 void send_order(int choice, int send_data, DATA* temp);//設定に従い指定したデータを送信する。
-void receive_data(int choice, DATA* temp);//受信したデータを画面に表示する。
-void close_connection(DATA* temp_struct);//構造体に保持されている情報を初期化する。
+void receive_data(int choice, DATA* temp);//データを受信する。
+void close_connection(DATA* temp_struct);//送受信バッファの情報を消去した後、構造体に保持されている情報を初期化する。
 
 int input_check(int lowest, int highest);//上下限のある入力の際に入力内容が範囲内かチェックする。
 void get_time(DATA* temp);//現在時刻を取得する
@@ -116,8 +117,11 @@ void add_addresFile(char port_name[ID_SIZE_DATA], char mech_name[ADDRESS_DATA]);
 void show_status(char temp_data[LOG_SIZE], DATA* temp);//指定したクライアントからセンサーの値を取得し、外部フォルダに保存する事が出来る。
 void change_temp(DATA* temp);//指定したクライアントの設定温度を変更する。
 void show_temp(char temp_data[LOG_SIZE], DATA* temp);//指定したクライアントから設定温度を取得し、表示する。
-void receive_react(int choice, char temp_data[LOG_SIZE], DATA* temp);//受信時のリアクション関数。
+void receive_react(int choice, char temp_data[LOG_SIZE], DATA* temp);//受信時のリアクションが内包されたラッパー関数。
 
+void reset_target_client(DATA* temp);//対象のクライアントを再起動させる
+
+//ＯＳからメッセージを受信した際走るプログラム
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 	if (msg == WM_DEVICECHANGE) {
 		if (wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) {//挿抜に限定す
@@ -134,7 +138,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 	}
 	return DefWindowProc(hwnd, msg, wParam, lParam);
 }
-
 
 void main(void) {
 	printf("外部フォルダを確認\n");
@@ -167,7 +170,7 @@ void main(void) {
 			break;
 
 		case SEND_ORDER:
-			to_send_order_screen();
+			run_order_menu();
 			break;
 
 		default:
@@ -178,6 +181,7 @@ void main(void) {
 	}
 }
 
+//管理選択肢のメイン画面を表示する。
 int main_screen() {
 	int choice = 0;
 
@@ -193,7 +197,8 @@ int main_screen() {
 	return(choice);
 }
 
-void to_send_order_screen() {
+//対象のクライアントへの命令に合わせた分岐を行う。
+void run_order_menu() {
 	int choice = INPUT_CHECK;
 	DATA temp_struct = { 0 };
 
@@ -224,11 +229,16 @@ void to_send_order_screen() {
 		}
 		break;
 
+	case RESET_CLINT:
+		reset_target_client(&temp_struct);
+		break;
+
 	default:break;
 	}
 	close_connection(&temp_struct);
 }
 
+//クライアントへ送信する命令選択画面。
 int order_choice_screen() {
 	printf("クライアントに指示する内容を選択してください\n");
 	printf("\n");
@@ -236,58 +246,18 @@ int order_choice_screen() {
 	printf("1:設定温度の確認\n");
 	printf("2:設定温度の変更\n");
 	printf("3:電源のON/OFF\n");
+	printf("4:クライアントの再起動\n");
 	printf("それ以外:管理画面に戻る\n");
 
-	int choice = input_check(SHOW_SENSOR_STATUS, POWER_ON_OFF);
-	if (choice < SHOW_SENSOR_STATUS || POWER_ON_OFF < choice) {
+	int choice = input_check(SHOW_SENSOR_STATUS, RESET_CLINT);
+	if (choice < SHOW_SENSOR_STATUS || RESET_CLINT < choice) {
 		return(INPUT_CHECK);
 	}
 
 	return(choice);
 }
 
-void show_log_file() {
-	FILE* fp;
-	char temp_header[LOG_SIZE] = { 0 };
-
-
-
-	fp = fopen("Client_Log.txt", "rb");
-	if (fp == NULL) {
-		error_reaction(FILE_SYS);
-		return;
-	}
-
-	while (fgets(temp_header, LOG_SIZE, fp) != NULL) {
-		printf("%s", temp_header);
-	}
-
-	fclose(fp);
-}
-
-void write_log_file(DATA* temp) {
-	FILE* fp;
-	char temp_header[LOG_SIZE] = { 0 };
-
-	fp = fopen("Client_Log.txt", "ab");
-	if (fp == NULL) {
-		error_reaction(FILE_SYS);
-		return;
-	}
-	get_time(temp);
-	fprintf(fp, "%s,%.1f,%.1f,%d,%d,%d,%d,%d\n",
-		temp->id,
-		temp->temperature,
-		temp->humidity,
-		(temp->timestamp.tm_year + 1900),
-		(temp->timestamp.tm_mon + 1),
-		temp->timestamp.tm_mday,
-		temp->timestamp.tm_hour,
-		temp->timestamp.tm_min);
-	fclose(fp);
-}
-
-
+//設定したモードのリアクションを表示する。
 void error_reaction(int mode) {
 
 	switch (mode) {
@@ -322,6 +292,50 @@ void error_reaction(int mode) {
 	}
 }
 
+//起動時に直近のログ情報を外部フォルダから取得する。
+void show_log_file() {
+	FILE* fp;
+	char temp_header[LOG_SIZE] = { 0 };
+
+
+
+	fp = fopen("Client_Log.txt", "rb");
+	if (fp == NULL) {
+		error_reaction(FILE_SYS);
+		return;
+	}
+
+	while (fgets(temp_header, LOG_SIZE, fp) != NULL) {
+		printf("%s", temp_header);
+	}
+
+	fclose(fp);
+}
+
+//対象の情報を外部フォルダに書き込む。
+void write_log_file(DATA* temp) {
+	FILE* fp;
+	char temp_header[LOG_SIZE] = { 0 };
+
+	fp = fopen("Client_Log.txt", "ab");
+	if (fp == NULL) {
+		error_reaction(FILE_SYS);
+		return;
+	}
+	get_time(temp);
+	fprintf(fp, "%s,%.1f,%.1f,%d,%d,%d,%d,%d\n",
+		temp->id,
+		temp->temperature,
+		temp->humidity,
+		(temp->timestamp.tm_year + 1900),
+		(temp->timestamp.tm_mon + 1),
+		temp->timestamp.tm_mday,
+		temp->timestamp.tm_hour,
+		temp->timestamp.tm_min);
+	fclose(fp);
+}
+
+//外部フォルダに保存された情報を一覧表示する。
 int show_file_contents(FILE* address_file, char temp_addr_datas[ALL_CLIENTS][ADDRESS_DATA]) {
 	int count = 0;
 
@@ -333,6 +347,7 @@ int show_file_contents(FILE* address_file, char temp_addr_datas[ALL_CLIENTS][ADD
 	return count;
 }
 
+//外部フォルダから必要な情報を獲得する。
 void get_file_contents(DATA* temp) {
 	char  address_data[ADDRESS_DATA] = { 0 };
 	char temp_addr_datas[ALL_CLIENTS][ADDRESS_DATA] = { 0 };
@@ -378,10 +393,9 @@ void get_file_contents(DATA* temp) {
 	strcpy(temp->pass, port);
 	strcpy(temp->id, id);
 
-
 }
 
-
+//シリアル通信機能のセットを行う。
 void setup_connection(DATA* temp) {
 	HANDLE client;
 
@@ -424,6 +438,7 @@ void setup_connection(DATA* temp) {
 	temp->handle = client;
 }
 
+// 設定に従い指定したデータを送信する。
 void send_order(int choice, int send_data, DATA* temp) {
 	uint8_t order[2] = { choice,send_data };
 	DWORD result = 0;
@@ -447,6 +462,7 @@ void send_order(int choice, int send_data, DATA* temp) {
 
 }
 
+//データを受信する。
 void receive_data(int choice, DATA* temp) {
 	char answer[LOG_SIZE] = { 0 };
 	char temp_data[LOG_SIZE] = { 0 };
@@ -479,6 +495,7 @@ void receive_data(int choice, DATA* temp) {
 	else error_reaction(CONNECT_SYS);
 }
 
+//送受信バッファの情報を消去した後、構造体に保持されている情報を初期化する。
 void close_connection(DATA* temp) {
 	if (temp->handle != NULL &&
 		temp->handle != INVALID_HANDLE_VALUE) {
@@ -490,7 +507,7 @@ void close_connection(DATA* temp) {
 	*temp = (DATA){ 0 };
 }
 
-
+//上下限のある入力の際に入力内容が範囲内かチェックする。
 int input_check(int lowest, int highest) {
 	int button;
 	int input_check;
@@ -507,12 +524,13 @@ int input_check(int lowest, int highest) {
 	return(button);
 }
 
+//現在時刻を取得する
 void get_time(DATA* temp) {
 	time_t now = time(NULL);
 	temp->timestamp = *localtime(&now);
 }
 
-
+//OSにシリアルポートに挿抜の検出を要請する。
 void set_deviceport_lighathouse(HWND hwnd) {
 	DEV_BROADCAST_DEVICEINTERFACE lighthouse = { 0 };
 	lighthouse.dbcc_size = sizeof(DEV_BROADCAST_DEVICEINTERFACE);
@@ -529,6 +547,7 @@ void set_deviceport_lighathouse(HWND hwnd) {
 	}
 }
 
+//検出時の通知を受け取る為のウインドウを作る。
 bool make_massage_window(HINSTANCE hInst) {
 
 	BOOL InitWindowClass(HINSTANCE  hwnd);
@@ -545,6 +564,7 @@ bool make_massage_window(HINSTANCE hInst) {
 	return TRUE;
 }
 
+//作成したウィンドウのセットアップを行う。
 HWND setup_massage_window(HINSTANCE  hInst) {
 
 	HWND hwnd = CreateWindowEx(
@@ -567,6 +587,7 @@ HWND setup_massage_window(HINSTANCE  hInst) {
 	return hwnd;
 }
 
+//挿抜が検出されるまでの動作を定めている。
 void message_waiting() {
 	MSG msg = { 0 };
 	while (GetMessage(&msg, NULL, 0, 0) > 0) {
@@ -575,6 +596,7 @@ void message_waiting() {
 	}
 }
 
+//検出の要請から待機状態までが格納されている。
 void set_port_monitoring() {
 	HINSTANCE hInst = GetModuleHandle(NULL);
 	HWND hwnd = { 0 };
@@ -590,12 +612,13 @@ void set_port_monitoring() {
 	message_waiting();
 }
 
+//検出の要請から待機状態までが格納されている。
 DWORD WINAPI port_monitoring_thread(LPVOID pParam) {
 	set_port_monitoring();
 	return 0;
 }
 
-
+//与えられたアドレスに対し、通信確認のポーリングを行う。
 void pingpong_address_file(DATA* temp) {
 
 	setup_connection(temp);
@@ -619,6 +642,7 @@ void pingpong_address_file(DATA* temp) {
 	CloseHandle(temp->handle);
 }
 
+//外部アドレスから接続が無効なモノを消去する。
 void remove_address() {
 	char  address_data[MAX_SIZE] = { 0 };
 	FILE* copy = NULL;
@@ -672,6 +696,7 @@ void remove_address() {
 
 }
 
+//OSからの通知で機器の挿入に決まった動作を返す。
 void get_add_inport_device(PDEV_BROADCAST_DEVICEINTERFACE base) {
 	char port_name[MAX_SIZE] = { 0 };
 	char mech_name[MAX_SIZE] = { 0 };
@@ -681,6 +706,7 @@ void get_add_inport_device(PDEV_BROADCAST_DEVICEINTERFACE base) {
 	add_addresFile(port_name, mech_name);
 }
 
+//挿入された時の情報を基に使用ポート情報を取得する。
 void get_com_port_from_path(const wchar_t* device_path, char port_name[ID_SIZE_DATA], char mech_name[ADDRESS_DATA]) {
 
 	if (!device_path) return;
@@ -764,6 +790,7 @@ void get_com_port_from_path(const wchar_t* device_path, char port_name[ID_SIZE_D
 	SetupDiDestroyDeviceInfoList(hDevInfo);
 }
 
+;//接続情報を外部フォルダに記憶する。
 void add_addresFile(char port_name[ID_SIZE_DATA], char mech_name[ADDRESS_DATA]) {
 	FILE* fp;
 
@@ -780,7 +807,7 @@ void add_addresFile(char port_name[ID_SIZE_DATA], char mech_name[ADDRESS_DATA]) 
 	fclose(fp);
 }
 
-
+//指定したクライアントからセンサーの値を取得し、外部フォルダに保存する事が出来る。
 void show_status(char temp_data[LOG_SIZE], DATA* temp) {
 	int temp_choice;
 	int ret;
@@ -812,6 +839,7 @@ void show_status(char temp_data[LOG_SIZE], DATA* temp) {
 
 }
 
+//指定したクライアントの設定温度を変更する。
 void change_temp(DATA* temp) {
 
 	printf("対象の設定温度を変更致します\n");
@@ -826,6 +854,7 @@ void change_temp(DATA* temp) {
 	temp->temperature = tempf;
 }
 
+//指定したクライアントから設定温度を取得し、表示する。
 void show_temp(char temp_data[LOG_SIZE], DATA* temp) {
 	int ret;
 
@@ -837,6 +866,7 @@ void show_temp(char temp_data[LOG_SIZE], DATA* temp) {
 
 }
 
+//受信時のリアクションが内包されたラッパー関数。
 void receive_react(int choice, char temp_data[LOG_SIZE], DATA* temp) {
 	switch (choice) {
 
@@ -862,4 +892,19 @@ void receive_react(int choice, char temp_data[LOG_SIZE], DATA* temp) {
 
 
 }
+
+//対象のクライアントを再起動させる
+void reset_target_client(DATA* temp) {
+	if (temp == NULL || temp->handle == NULL || temp->handle == INVALID_HANDLE_VALUE) {
+		return;
+	}
+
+	HANDLE client = temp->handle;
+
+	EscapeCommFunction(client, SETDTR);
+	Sleep(100);
+	EscapeCommFunction(client, CLRDTR);
+	Sleep(1500);
+}
+
 

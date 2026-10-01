@@ -43,7 +43,7 @@ const uint8_t nump[] = {
 
 int g_temper[4] = { 0, 0, 6, 2 };
 
-bool g_status = false;
+volatile bool g_status = false;
 
 enum HOST_SIDE_COMMAND {
   RESPONSE_TEMP,
@@ -157,17 +157,18 @@ void power_react() {
   if (g_status == true) {
     power_onSign();
 
-  } else if (g_status == false) {
+  } else {
     power_OffSign();
     clean_Receive_Buff();
   }
 }
 
+
 void to_receive_react() {
 
-  if (Serial.available() >= 2) {
-
+  if (Serial.available() > 1) {
     int incomingChar = Serial.read();
+
     if (g_status == false && incomingChar != POWER_ON_OFF && incomingChar != PING_PONG) {
       Serial.print("PowerIsOff,");
       Serial.println(g_status);
@@ -176,8 +177,9 @@ void to_receive_react() {
   }
 }
 
-void action_select(int command) {
 
+void action_select(int command) {
+  int host_command_set_temper = 0;
 
   switch (command) {
     case RESPONSE_TEMP:
@@ -189,15 +191,15 @@ void action_select(int command) {
       break;
 
     case CHANGE_TEMP:
-      int host_command = Serial.read();
-      change_SetTemp(host_command);
+      host_command_set_temper = Serial.read();
+      change_SetTemp(host_command_set_temper);
       break;
 
     case POWER_ON_OFF:
-      g_status = !g_status;
-      power_react();
       Serial.print("ok,");
       Serial.println(g_status);
+      g_status = !g_status;
+      power_react();
       break;
 
     case PING_PONG:
@@ -231,8 +233,13 @@ void clean_Receive_Buff() {
 }
 
 void Seg_choice(uint8_t dig, uint8_t num) {
+  uint8_t pattern = nump[num];
+
+  if (num < 10 && dig == 2) {
+    pattern |= 0x01;
+  }
   digitalWrite(LCH, LOW);
-  shiftOut(SDI, CLK, LSBFIRST, nump[num]);
+  shiftOut(SDI, CLK, LSBFIRST, pattern);
   shiftOut(SDI, CLK, LSBFIRST, digi[dig]);
   digitalWrite(LCH, HIGH);
 }
